@@ -1,7 +1,14 @@
 import pytest
 from django.test import TestCase
-from app.models import Provider, LLMModel
-from datetime import date
+from app.models import (
+    Benchmark,
+    BenchmarkResult,
+    BenchmarkRun,
+    LatestBenchmarkResult,
+    LLMModel,
+    Provider,
+)
+from datetime import date, datetime, timezone
 from rest_framework.test import APIClient
 from decimal import Decimal
 
@@ -111,6 +118,130 @@ class LLMModelModelTest(TestCase):
                 input_price_per_1m="3.0000",
                 output_price_per_1m="15.0000",
                 release_date=date(2025, 5, 22),
+            )
+
+
+class BenchmarkModelTest(TestCase):
+    def test_create_benchmark(self):
+        benchmark = Benchmark.objects.create(name="MMLU")
+        assert benchmark.name == "MMLU"
+        assert benchmark.created_at is not None
+        assert str(benchmark) == "MMLU"
+
+    def test_benchmark_name_unique(self):
+        Benchmark.objects.create(name="MMLU")
+        with pytest.raises(Exception):
+            Benchmark.objects.create(name="MMLU")
+
+
+class BenchmarkRunModelTest(TestCase):
+    def setUp(self):
+        self.benchmark = Benchmark.objects.create(name="MMLU")
+
+    def test_create_run(self):
+        run = BenchmarkRun.objects.create(
+            benchmark=self.benchmark,
+            run_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        assert run.benchmark == self.benchmark
+        assert run.run_at == datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    def test_runs_ordered_newest_first(self):
+        BenchmarkRun.objects.create(
+            benchmark=self.benchmark,
+            run_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        BenchmarkRun.objects.create(
+            benchmark=self.benchmark,
+            run_at=datetime(2026, 3, 1, tzinfo=timezone.utc),
+        )
+        run_at_values = [r.run_at.month for r in BenchmarkRun.objects.all()]
+        assert run_at_values == [3, 1]
+
+
+class BenchmarkResultModelTest(TestCase):
+    def setUp(self):
+        self.benchmark = Benchmark.objects.create(name="MMLU")
+        self.run = BenchmarkRun.objects.create(
+            benchmark=self.benchmark,
+            run_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        provider = Provider.objects.create(name="Anthropic")
+        self.model = LLMModel.objects.create(
+            provider=provider,
+            name="Claude Sonnet 4",
+            context_window=200000,
+            input_price_per_1m="3.0000",
+            output_price_per_1m="15.0000",
+            release_date=date(2025, 5, 22),
+        )
+
+    def test_create_result(self):
+        result = BenchmarkResult.objects.create(
+            run=self.run,
+            llm_model=self.model,
+            score=Decimal("87.5000"),
+        )
+        assert result.score == Decimal("87.5000")
+        assert result.run == self.run
+        assert result.llm_model == self.model
+
+    def test_result_unique_per_run_and_model(self):
+        BenchmarkResult.objects.create(
+            run=self.run, llm_model=self.model, score=Decimal("87.5000")
+        )
+        with pytest.raises(Exception):
+            BenchmarkResult.objects.create(
+                run=self.run, llm_model=self.model, score=Decimal("88.0000")
+            )
+
+
+class LatestBenchmarkResultModelTest(TestCase):
+    def setUp(self):
+        self.benchmark = Benchmark.objects.create(name="MMLU")
+        self.run = BenchmarkRun.objects.create(
+            benchmark=self.benchmark,
+            run_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        provider = Provider.objects.create(name="Anthropic")
+        self.model = LLMModel.objects.create(
+            provider=provider,
+            name="Claude Sonnet 4",
+            context_window=200000,
+            input_price_per_1m="3.0000",
+            output_price_per_1m="15.0000",
+            release_date=date(2025, 5, 22),
+        )
+        self.result = BenchmarkResult.objects.create(
+            run=self.run, llm_model=self.model, score=Decimal("87.5000")
+        )
+
+    def test_create_latest(self):
+        latest = LatestBenchmarkResult.objects.create(
+            benchmark=self.benchmark,
+            llm_model=self.model,
+            result=self.result,
+            score=self.result.score,
+            measured_at=self.run.run_at,
+        )
+        assert latest.score == Decimal("87.5000")
+        assert latest.measured_at == self.run.run_at
+
+    def test_latest_unique_per_benchmark_and_model(self):
+        LatestBenchmarkResult.objects.create(
+            benchmark=self.benchmark,
+            llm_model=self.model,
+            result=self.result,
+            score=self.result.score,
+            measured_at=self.run.run_at,
+        )
+        with pytest.raises(Exception):
+            LatestBenchmarkResult.objects.create(
+                benchmark=self.benchmark,
+                llm_model=self.model,
+                result=self.result,
+                score=self.result.score,
+                measured_at=self.run.run_at,
             )
 
 
