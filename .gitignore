@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Django
+*.sqlite3
+staticfiles/
+
+# Node
+node_modules/
+dist/
+
+# Environments
+backend/.venv
+.env
+
+# OS / editors
+.DS_Store
+.vscode/
+.idea/
+
+# Logs
+*.log
