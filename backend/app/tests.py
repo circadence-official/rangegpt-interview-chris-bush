@@ -208,6 +208,61 @@ class LatestBenchmarkResultModelTest(TestCase):
             )
 
 
+class LatestBenchmarkResultUpsertTest(TestCase):
+    def setUp(self):
+        self.benchmark = Benchmark.objects.create(name="MMLU")
+        provider = Provider.objects.create(name="Anthropic")
+        self.model = LLMModel.objects.create(
+            provider=provider,
+            name="Claude Sonnet 4",
+            context_window=200000,
+            input_price_per_1m="3.0000",
+            output_price_per_1m="15.0000",
+            release_date=date(2025, 5, 22),
+        )
+
+    def _result(self, run_at, score):
+        run = BenchmarkRun.objects.create(
+            benchmark=self.benchmark, run_at=run_at
+        )
+        return BenchmarkResult.objects.create(
+            run=run, llm_model=self.model, score=Decimal(score)
+        )
+
+    def test_first_result_populates_cache(self):
+        result = self._result(datetime(2026, 1, 1, tzinfo=timezone.utc), "80.0")
+        latest = LatestBenchmarkResult.upsert_for_result(result)
+        assert latest.score == Decimal("80.0000")
+        assert latest.result == result
+        assert LatestBenchmarkResult.objects.count() == 1
+
+    def test_newer_result_overwrites_cache(self):
+        older = self._result(datetime(2026, 1, 1, tzinfo=timezone.utc), "80.0")
+        LatestBenchmarkResult.upsert_for_result(older)
+        newer = self._result(datetime(2026, 2, 1, tzinfo=timezone.utc), "85.0")
+        latest = LatestBenchmarkResult.upsert_for_result(newer)
+        assert latest.score == Decimal("85.0000")
+        assert latest.result == newer
+        assert LatestBenchmarkResult.objects.count() == 1
+
+    def test_older_backfill_does_not_clobber(self):
+        newer = self._result(datetime(2026, 2, 1, tzinfo=timezone.utc), "85.0")
+        LatestBenchmarkResult.upsert_for_result(newer)
+        older = self._result(datetime(2026, 1, 1, tzinfo=timezone.utc), "80.0")
+        latest = LatestBenchmarkResult.upsert_for_result(older)
+        assert latest.score == Decimal("85.0000")
+        assert latest.result == newer
+        assert LatestBenchmarkResult.objects.count() == 1
+
+    def test_same_timestamp_is_noop(self):
+        existing = self._result(datetime(2026, 1, 1, tzinfo=timezone.utc), "80.0")
+        LatestBenchmarkResult.upsert_for_result(existing)
+        duplicate = self._result(datetime(2026, 1, 1, tzinfo=timezone.utc), "99.0")
+        latest = LatestBenchmarkResult.upsert_for_result(duplicate)
+        assert latest.score == Decimal("80.0000")
+        assert latest.result == existing
+
+
 class ProviderSerializerTest(TestCase):
     def test_provider_serialization(self):
         from app.serializers import ProviderSerializer

@@ -109,3 +109,25 @@ class LatestBenchmarkResult(models.Model):
 
     def __str__(self):
         return f"{self.llm_model} · {self.benchmark} · {self.score}"
+
+    @classmethod
+    def upsert_for_result(cls, result):
+        # Refresh the (benchmark, model) cache row if `result` is strictly
+        # newer than what we have. Older backfills are a noop so a late
+        # replay of historical data cannot clobber recent state.
+        measured_at = result.run.run_at
+        existing = cls.objects.filter(
+            benchmark=result.run.benchmark, llm_model=result.llm_model
+        ).first()
+        if existing and existing.measured_at >= measured_at:
+            return existing
+        obj, _ = cls.objects.update_or_create(
+            benchmark=result.run.benchmark,
+            llm_model=result.llm_model,
+            defaults={
+                "result": result,
+                "score": result.score,
+                "measured_at": measured_at,
+            },
+        )
+        return obj
