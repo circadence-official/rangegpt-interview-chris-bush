@@ -9,7 +9,8 @@ from app.models import (
     LLMModel,
     Provider,
 )
-from datetime import date
+from datetime import date, datetime, timezone
+from decimal import Decimal
 
 
 SEED_DATA = {
@@ -191,6 +192,35 @@ SEED_DATA = {
 }
 
 
+BENCHMARK_CATALOG = [
+    {
+        "name": "MMLU",
+        "score_offset": 50.0,
+    },
+    {
+        "name": "HumanEval",
+        "score_offset": 45.0,
+    },
+    {
+        "name": "GPQA Diamond",
+        "score_offset": 20.0,
+    },
+]
+
+SEED_RUN_TIMESTAMPS = [
+    datetime(2025, 10, 1, tzinfo=timezone.utc),
+    datetime(2026, 1, 1, tzinfo=timezone.utc),
+    datetime(2026, 4, 1, tzinfo=timezone.utc),
+]
+
+
+def _synthesize_score(elo, offset, run_index):
+    # Higher ELO → higher benchmark score; later runs tick up slightly.
+    # Clamp the top end so strong models don't blow past 100%.
+    base = max(0.0, (elo - 1000) / 10.0) + offset
+    return round(min(99.5, base + run_index * 1.5), 2)
+
+
 class Command(BaseCommand):
     help = "Seed the database with LLM provider and model data"
 
@@ -200,6 +230,7 @@ class Command(BaseCommand):
             name=ARENA_ELO_BENCHMARK_NAME,
         )
 
+        models_with_elo = []
         for provider_name, provider_data in SEED_DATA.items():
             provider, created = Provider.objects.get_or_create(
                 name=provider_name,
@@ -223,14 +254,19 @@ class Command(BaseCommand):
 
                 if elo_score is not None:
                     self._seed_arena_elo_score(arena_elo, model, elo_score)
+                    models_with_elo.append((model, elo_score))
+
+        self._seed_additional_benchmarks(models_with_elo)
 
         total_providers = Provider.objects.count()
         total_models = LLMModel.objects.count()
+        total_benchmarks = Benchmark.objects.count()
         total_results = BenchmarkResult.objects.count()
         self.stdout.write(
             self.style.SUCCESS(
                 f"Seed complete: {total_providers} providers, "
-                f"{total_models} models, {total_results} benchmark results"
+                f"{total_models} models, {total_benchmarks} benchmarks, "
+                f"{total_results} benchmark results"
             )
         )
 
@@ -244,12 +280,25 @@ class Command(BaseCommand):
             llm_model=model,
             defaults={"score": score},
         )
-        LatestBenchmarkResult.objects.update_or_create(
-            benchmark=benchmark,
-            llm_model=model,
-            defaults={
-                "result": result,
-                "score": score,
-                "measured_at": run.run_at,
-            },
-        )
+        LatestBenchmarkResult.upsert_for_result(result)
+
+    def _seed_additional_benchmarks(self, models_with_elo):
+        for catalog in BENCHMARK_CATALOG:
+            benchmark, _ = Benchmark.objects.get_or_create(
+                name=catalog["name"],
+            )
+            for run_index, run_at in enumerate(SEED_RUN_TIMESTAMPS):
+                run, _ = BenchmarkRun.objects.get_or_create(
+                    benchmark=benchmark,
+                    run_at=run_at,
+                )
+                for model, elo in models_with_elo:
+                    score = _synthesize_score(
+                        elo, catalog["score_offset"], run_index
+                    )
+                    result, _ = BenchmarkResult.objects.get_or_create(
+                        run=run,
+                        llm_model=model,
+                        defaults={"score": Decimal(str(score))},
+                    )
+                    LatestBenchmarkResult.upsert_for_result(result)

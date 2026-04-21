@@ -416,6 +416,33 @@ class SeedCommandTest(TestCase):
         arena = Benchmark.objects.get(name=ARENA_ELO_BENCHMARK_NAME)
         assert LatestBenchmarkResult.objects.filter(benchmark=arena).count() >= 15
 
+    def test_seed_populates_additional_benchmarks_with_history(self):
+        from django.core.management import call_command
+
+        call_command("seed")
+        for name in ("MMLU", "HumanEval", "GPQA Diamond"):
+            benchmark = Benchmark.objects.get(name=name)
+            assert benchmark.runs.count() == 3
+            assert BenchmarkResult.objects.filter(run__benchmark=benchmark).count() == 45
+            assert (
+                LatestBenchmarkResult.objects.filter(benchmark=benchmark).count()
+                == 15
+            )
+
+    def test_seed_latest_cache_points_at_newest_run(self):
+        from django.core.management import call_command
+
+        call_command("seed")
+        mmlu = Benchmark.objects.get(name="MMLU")
+        latest_measured_at = (
+            LatestBenchmarkResult.objects.filter(benchmark=mmlu)
+            .values_list("measured_at", flat=True)
+            .distinct()
+        )
+        assert list(latest_measured_at) == [
+            datetime(2026, 4, 1, tzinfo=timezone.utc)
+        ]
+
     def test_seed_is_idempotent(self):
         from django.core.management import call_command
 
