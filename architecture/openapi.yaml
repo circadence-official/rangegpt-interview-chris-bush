@@ -1,0 +1,228 @@
+openapi: 3.0.3
+info:
+  title: LLM Leaderboard API
+  version: 0.1.0
+  description: Catalog of AI model providers, models, and benchmark results.
+paths:
+  /api/health/:
+    get:
+      operationId: health_retrieve
+      description: Returns a static payload used by the frontend healthcheck.
+      summary: Liveness probe
+      tags:
+      - health
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+              examples:
+                Ok:
+                  value:
+                    status: ok
+                  summary: ok
+          description: ''
+  /api/models/:
+    get:
+      operationId: models_list
+      tags:
+      - models
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/LLMModelList'
+          description: ''
+  /api/models/{id}/:
+    get:
+      operationId: models_retrieve
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - models
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LLMModel'
+          description: ''
+  /api/models/create/:
+    post:
+      operationId: models_create_create
+      tags:
+      - models
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LLMModel'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/LLMModel'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/LLMModel'
+        required: true
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - {}
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LLMModel'
+          description: ''
+components:
+  schemas:
+    LLMModel:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        provider:
+          allOf:
+          - $ref: '#/components/schemas/Provider'
+          readOnly: true
+        provider_id:
+          type: integer
+          writeOnly: true
+        name:
+          type: string
+          maxLength: 200
+        description:
+          type: string
+        context_window:
+          type: integer
+          maximum: 2147483647
+          minimum: -2147483648
+        input_price_per_1m:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,6}(?:\.\d{0,4})?$
+        output_price_per_1m:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,6}(?:\.\d{0,4})?$
+        arena_elo_score:
+          type: integer
+          maximum: 2147483647
+          minimum: -2147483648
+          nullable: true
+        release_date:
+          type: string
+          format: date
+        is_open_source:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - context_window
+      - created_at
+      - id
+      - input_price_per_1m
+      - name
+      - output_price_per_1m
+      - provider
+      - provider_id
+      - release_date
+      - updated_at
+    LLMModelList:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        provider:
+          allOf:
+          - $ref: '#/components/schemas/Provider'
+          readOnly: true
+        name:
+          type: string
+          maxLength: 200
+        context_window:
+          type: integer
+          maximum: 2147483647
+          minimum: -2147483648
+        input_price_per_1m:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,6}(?:\.\d{0,4})?$
+        output_price_per_1m:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,6}(?:\.\d{0,4})?$
+        arena_elo_score:
+          type: integer
+          maximum: 2147483647
+          minimum: -2147483648
+          nullable: true
+        release_date:
+          type: string
+          format: date
+        is_open_source:
+          type: boolean
+      required:
+      - context_window
+      - id
+      - input_price_per_1m
+      - name
+      - output_price_per_1m
+      - provider
+      - release_date
+    Provider:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        name:
+          type: string
+          maxLength: 100
+        website:
+          type: string
+          format: uri
+          maxLength: 200
+      required:
+      - id
+      - name
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: sessionid
