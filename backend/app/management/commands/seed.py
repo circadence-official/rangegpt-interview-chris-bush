@@ -1,5 +1,14 @@
 from django.core.management.base import BaseCommand
-from app.models import Provider, LLMModel
+from django.db import transaction
+from app.constants import ARENA_ELO_BENCHMARK_NAME
+from app.models import (
+    Benchmark,
+    BenchmarkResult,
+    BenchmarkRun,
+    LatestBenchmarkResult,
+    LLMModel,
+    Provider,
+)
 from datetime import date
 
 
@@ -185,7 +194,12 @@ SEED_DATA = {
 class Command(BaseCommand):
     help = "Seed the database with LLM provider and model data"
 
+    @transaction.atomic
     def handle(self, *args, **options):
+        arena_elo, _ = Benchmark.objects.get_or_create(
+            name=ARENA_ELO_BENCHMARK_NAME,
+        )
+
         for provider_name, provider_data in SEED_DATA.items():
             provider, created = Provider.objects.get_or_create(
                 name=provider_name,
@@ -195,18 +209,47 @@ class Command(BaseCommand):
             self.stdout.write(f"  {action}: Provider '{provider_name}'")
 
             for model_data in provider_data["models"]:
-                _, created = LLMModel.objects.get_or_create(
+                elo_score = model_data.get("arena_elo_score")
+                model_fields = {
+                    k: v for k, v in model_data.items() if k != "arena_elo_score"
+                }
+                model, created = LLMModel.objects.get_or_create(
                     provider=provider,
-                    name=model_data["name"],
-                    defaults=model_data,
+                    name=model_fields["name"],
+                    defaults=model_fields,
                 )
                 action = "Created" if created else "Already exists"
-                self.stdout.write(f"    {action}: {model_data['name']}")
+                self.stdout.write(f"    {action}: {model_fields['name']}")
+
+                if elo_score is not None:
+                    self._seed_arena_elo_score(arena_elo, model, elo_score)
 
         total_providers = Provider.objects.count()
         total_models = LLMModel.objects.count()
+        total_results = BenchmarkResult.objects.count()
         self.stdout.write(
             self.style.SUCCESS(
-                f"Seed complete: {total_providers} providers, {total_models} models"
+                f"Seed complete: {total_providers} providers, "
+                f"{total_models} models, {total_results} benchmark results"
             )
+        )
+
+    def _seed_arena_elo_score(self, benchmark, model, score):
+        run, _ = BenchmarkRun.objects.get_or_create(
+            benchmark=benchmark,
+            run_at=model.updated_at,
+        )
+        result, _ = BenchmarkResult.objects.get_or_create(
+            run=run,
+            llm_model=model,
+            defaults={"score": score},
+        )
+        LatestBenchmarkResult.objects.update_or_create(
+            benchmark=benchmark,
+            llm_model=model,
+            defaults={
+                "result": result,
+                "score": score,
+                "measured_at": run.run_at,
+            },
         )

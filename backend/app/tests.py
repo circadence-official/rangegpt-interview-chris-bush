@@ -1,5 +1,6 @@
 import pytest
 from django.test import TestCase
+from app.constants import ARENA_ELO_BENCHMARK_NAME
 from app.models import (
     Benchmark,
     BenchmarkResult,
@@ -51,7 +52,6 @@ class LLMModelModelTest(TestCase):
             context_window=200000,
             input_price_per_1m="3.0000",
             output_price_per_1m="15.0000",
-            arena_elo_score=1320,
             release_date=date(2025, 5, 22),
             is_open_source=False,
         )
@@ -61,43 +61,6 @@ class LLMModelModelTest(TestCase):
         assert model.created_at is not None
         assert model.updated_at is not None
         assert str(model) == "Anthropic - Claude Sonnet 4"
-
-    def test_llm_model_ordering_by_elo(self):
-        LLMModel.objects.create(
-            provider=self.provider,
-            name="Model A",
-            description="",
-            context_window=100000,
-            input_price_per_1m="1.0000",
-            output_price_per_1m="5.0000",
-            arena_elo_score=1100,
-            release_date=date(2025, 1, 1),
-        )
-        LLMModel.objects.create(
-            provider=self.provider,
-            name="Model B",
-            description="",
-            context_window=100000,
-            input_price_per_1m="1.0000",
-            output_price_per_1m="5.0000",
-            arena_elo_score=1300,
-            release_date=date(2025, 1, 1),
-        )
-        models = list(LLMModel.objects.values_list("name", flat=True))
-        assert models == ["Model B", "Model A"]
-
-    def test_llm_model_nullable_elo(self):
-        model = LLMModel.objects.create(
-            provider=self.provider,
-            name="New Model",
-            description="",
-            context_window=100000,
-            input_price_per_1m="1.0000",
-            output_price_per_1m="5.0000",
-            arena_elo_score=None,
-            release_date=date(2025, 1, 1),
-        )
-        assert model.arena_elo_score is None
 
     def test_unique_together_provider_name(self):
         LLMModel.objects.create(
@@ -267,7 +230,6 @@ class LLMModelSerializerTest(TestCase):
             context_window=200000,
             input_price_per_1m="3.0000",
             output_price_per_1m="15.0000",
-            arena_elo_score=1320,
             release_date=date(2025, 5, 22),
             is_open_source=False,
         )
@@ -312,7 +274,6 @@ class LLMModelListViewTest(TestCase):
             context_window=200000,
             input_price_per_1m="3.0000",
             output_price_per_1m="15.0000",
-            arena_elo_score=1320,
             release_date=date(2025, 5, 22),
         )
 
@@ -336,7 +297,6 @@ class LLMModelDetailViewTest(TestCase):
             context_window=200000,
             input_price_per_1m="3.0000",
             output_price_per_1m="15.0000",
-            arena_elo_score=1320,
             release_date=date(2025, 5, 22),
         )
 
@@ -368,7 +328,6 @@ class LLMModelCreateViewTest(TestCase):
                 "context_window": 200000,
                 "input_price_per_1m": "15.0000",
                 "output_price_per_1m": "75.0000",
-                "arena_elo_score": 1350,
                 "release_date": "2025-05-22",
                 "is_open_source": False,
             },
@@ -395,11 +354,85 @@ class SeedCommandTest(TestCase):
         assert Provider.objects.count() >= 5
         assert LLMModel.objects.count() >= 15
 
+    def test_seed_populates_arena_elo_benchmark(self):
+        from django.core.management import call_command
+
+        call_command("seed")
+        arena = Benchmark.objects.get(name=ARENA_ELO_BENCHMARK_NAME)
+        assert LatestBenchmarkResult.objects.filter(benchmark=arena).count() >= 15
+
     def test_seed_is_idempotent(self):
         from django.core.management import call_command
 
         call_command("seed")
-        count_first = LLMModel.objects.count()
+        models_first = LLMModel.objects.count()
+        runs_first = BenchmarkRun.objects.count()
+        results_first = BenchmarkResult.objects.count()
         call_command("seed")
-        count_second = LLMModel.objects.count()
-        assert count_first == count_second
+        assert LLMModel.objects.count() == models_first
+        assert BenchmarkRun.objects.count() == runs_first
+        assert BenchmarkResult.objects.count() == results_first
+
+
+class LLMModelListArenaEloTest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        provider = Provider.objects.create(name="TestProvider")
+        self.model_a = LLMModel.objects.create(
+            provider=provider,
+            name="Model A",
+            context_window=100000,
+            input_price_per_1m="1.0000",
+            output_price_per_1m="5.0000",
+            release_date=date(2025, 1, 1),
+        )
+        self.model_b = LLMModel.objects.create(
+            provider=provider,
+            name="Model B",
+            context_window=100000,
+            input_price_per_1m="1.0000",
+            output_price_per_1m="5.0000",
+            release_date=date(2025, 1, 1),
+        )
+        self.model_c = LLMModel.objects.create(
+            provider=provider,
+            name="Model C",
+            context_window=100000,
+            input_price_per_1m="1.0000",
+            output_price_per_1m="5.0000",
+            release_date=date(2025, 1, 1),
+        )
+        arena = Benchmark.objects.create(name=ARENA_ELO_BENCHMARK_NAME)
+        run = BenchmarkRun.objects.create(
+            benchmark=arena,
+            run_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        for model, score in ((self.model_a, 1100), (self.model_b, 1300)):
+            result = BenchmarkResult.objects.create(
+                run=run, llm_model=model, score=Decimal(score)
+            )
+            LatestBenchmarkResult.objects.create(
+                benchmark=arena,
+                llm_model=model,
+                result=result,
+                score=Decimal(score),
+                measured_at=run.run_at,
+            )
+
+    def test_list_orders_by_arena_elo_desc_nulls_last(self):
+        response = self.client.get("/api/models/")
+        assert response.status_code == 200
+        names = [m["name"] for m in response.json()]
+        assert names == ["Model B", "Model A", "Model C"]
+
+    def test_list_exposes_arena_elo_from_benchmark_cache(self):
+        response = self.client.get("/api/models/")
+        scores = {m["name"]: m["arena_elo_score"] for m in response.json()}
+        assert scores["Model A"] == 1100
+        assert scores["Model B"] == 1300
+        assert scores["Model C"] is None
+
+    def test_detail_exposes_arena_elo_from_benchmark_cache(self):
+        response = self.client.get(f"/api/models/{self.model_a.id}/")
+        assert response.status_code == 200
+        assert response.json()["arena_elo_score"] == 1100

@@ -13,6 +13,7 @@ class LLMModelSerializer(serializers.ModelSerializer):
     provider_id = serializers.PrimaryKeyRelatedField(
         queryset=Provider.objects.all(), source="provider", write_only=True
     )
+    arena_elo_score = serializers.SerializerMethodField()
 
     class Meta:
         model = LLMModel
@@ -32,9 +33,14 @@ class LLMModelSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
+    def get_arena_elo_score(self, obj):
+        score = getattr(obj, "arena_elo_score", None)
+        return int(score) if score is not None else None
+
 
 class LLMModelListSerializer(serializers.ModelSerializer):
     provider = ProviderSerializer(read_only=True)
+    arena_elo_score = serializers.SerializerMethodField()
 
     class Meta:
         model = LLMModel
@@ -49,3 +55,7 @@ class LLMModelListSerializer(serializers.ModelSerializer):
             "release_date",
             "is_open_source",
         ]
+
+    def get_arena_elo_score(self, obj):
+        score = getattr(obj, "arena_elo_score", None)
+        return int(score) if score is not None else None

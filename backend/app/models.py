@@ -22,14 +22,12 @@ class LLMModel(models.Model):
     context_window = models.IntegerField()
     input_price_per_1m = models.DecimalField(max_digits=10, decimal_places=4)
     output_price_per_1m = models.DecimalField(max_digits=10, decimal_places=4)
-    arena_elo_score = models.IntegerField(null=True, blank=True)
     release_date = models.DateField()
     is_open_source = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ["-arena_elo_score"]
         unique_together = ["provider", "name"]
 
     def __str__(self):

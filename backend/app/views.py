@@ -1,9 +1,21 @@
+from django.db.models import F, OuterRef, Subquery
 from drf_spectacular.utils import OpenApiExample, OpenApiResponse, extend_schema
 from rest_framework import generics
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
-from app.models import LLMModel
+from app.constants import ARENA_ELO_BENCHMARK_NAME
+from app.models import LatestBenchmarkResult, LLMModel
 from app.serializers import LLMModelSerializer, LLMModelListSerializer
+
+
+def _llm_queryset():
+    arena_elo_latest = LatestBenchmarkResult.objects.filter(
+        llm_model=OuterRef("pk"),
+        benchmark__name=ARENA_ELO_BENCHMARK_NAME,
+    ).values("score")[:1]
+    return LLMModel.objects.select_related("provider").annotate(
+        arena_elo_score=Subquery(arena_elo_latest),
+    )
 
 
 @extend_schema(
@@ -20,12 +32,14 @@ def health_check(request):
 
 
 class LLMModelListView(generics.ListAPIView):
-    queryset = LLMModel.objects.select_related("provider").all()
+    queryset = _llm_queryset().order_by(
+        F("arena_elo_score").desc(nulls_last=True), "name"
+    )
     serializer_class = LLMModelListSerializer
 
 
 class LLMModelDetailView(generics.RetrieveAPIView):
-    queryset = LLMModel.objects.select_related("provider").all()
+    queryset = _llm_queryset()
     serializer_class = LLMModelSerializer
 
 
