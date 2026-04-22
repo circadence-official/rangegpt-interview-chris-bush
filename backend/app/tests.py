@@ -504,6 +504,153 @@ class BenchmarkDetailViewTest(TestCase):
         assert response.status_code == 404
 
 
+class BenchmarkRunCreateViewTest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.benchmark = Benchmark.objects.create(name="MMLU")
+        provider = Provider.objects.create(name="Anthropic")
+        self.model_a = LLMModel.objects.create(
+            provider=provider,
+            name="Claude Sonnet 4",
+            context_window=200000,
+            input_price_per_1m="3.0000",
+            output_price_per_1m="15.0000",
+            release_date=date(2025, 5, 22),
+        )
+        self.model_b = LLMModel.objects.create(
+            provider=provider,
+            name="Claude Opus 4",
+            context_window=200000,
+            input_price_per_1m="15.0000",
+            output_price_per_1m="75.0000",
+            release_date=date(2025, 5, 22),
+        )
+
+    def _payload(self, **overrides):
+        payload = {
+            "run_at": "2026-04-01T00:00:00Z",
+            "results": [
+                {
+                    "llm_model": self.model_a.id,
+                    "score": "87.50",
+                },
+                {
+                    "llm_model": self.model_b.id,
+                    "score": "92.00",
+                },
+            ],
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_create_run_persists_run_results_and_latest_cache(self):
+        response = self.client.post(
+            f"/api/benchmarks/{self.benchmark.id}/runs/",
+            self._payload(),
+            format="json",
+        )
+        assert response.status_code == 201, response.content
+        data = response.json()
+        assert data["benchmark"] == self.benchmark.id
+        assert len(data["results"]) == 2
+
+        assert BenchmarkRun.objects.filter(benchmark=self.benchmark).count() == 1
+        assert BenchmarkResult.objects.count() == 2
+        # latest cache populated for both models
+        latest = LatestBenchmarkResult.objects.filter(benchmark=self.benchmark)
+        assert latest.count() == 2
+        by_model = {l.llm_model_id: l.score for l in latest}
+        assert by_model[self.model_a.id] == Decimal("87.5000")
+        assert by_model[self.model_b.id] == Decimal("92.0000")
+
+    def test_resubmit_preserves_history_and_refreshes_cache(self):
+        self.client.post(
+            f"/api/benchmarks/{self.benchmark.id}/runs/",
+            self._payload(run_at="2026-01-01T00:00:00Z"),
+            format="json",
+        )
+        self.client.post(
+            f"/api/benchmarks/{self.benchmark.id}/runs/",
+            self._payload(
+                run_at="2026-04-01T00:00:00Z",
+                results=[
+                    {
+                        "llm_model": self.model_a.id,
+                        "score": "90.00",
+                    },
+                ],
+            ),
+            format="json",
+        )
+
+        runs = BenchmarkRun.objects.filter(benchmark=self.benchmark).order_by(
+            "run_at"
+        )
+        assert runs.count() == 2
+        # Both historical results retained
+        assert (
+            BenchmarkResult.objects.filter(
+                llm_model=self.model_a, run__benchmark=self.benchmark
+            ).count()
+            == 2
+        )
+        # Latest cache points at the newer run for model_a, original for model_b
+        latest_a = LatestBenchmarkResult.objects.get(
+            benchmark=self.benchmark, llm_model=self.model_a
+        )
+        latest_b = LatestBenchmarkResult.objects.get(
+            benchmark=self.benchmark, llm_model=self.model_b
+        )
+        assert latest_a.score == Decimal("90.0000")
+        assert latest_a.measured_at == datetime(
+            2026, 4, 1, tzinfo=timezone.utc
+        )
+        assert latest_b.score == Decimal("92.0000")
+
+    def test_create_run_returns_404_for_unknown_benchmark(self):
+        response = self.client.post(
+            "/api/benchmarks/99999/runs/", self._payload(), format="json"
+        )
+        assert response.status_code == 404
+
+    def test_create_run_rejects_empty_results(self):
+        response = self.client.post(
+            f"/api/benchmarks/{self.benchmark.id}/runs/",
+            self._payload(results=[]),
+            format="json",
+        )
+        assert response.status_code == 400
+        assert "results" in response.json()
+
+    def test_create_run_rejects_duplicate_model_in_results(self):
+        payload = self._payload(
+            results=[
+                {"llm_model": self.model_a.id, "score": "80.0"},
+                {"llm_model": self.model_a.id, "score": "85.0"},
+            ]
+        )
+        response = self.client.post(
+            f"/api/benchmarks/{self.benchmark.id}/runs/",
+            payload,
+            format="json",
+        )
+        assert response.status_code == 400
+        assert "results" in response.json()
+        # Nothing should have been persisted
+        assert BenchmarkRun.objects.count() == 0
+        assert BenchmarkResult.objects.count() == 0
+
+    def test_create_run_rejects_missing_run_at(self):
+        payload = self._payload()
+        payload.pop("run_at")
+        response = self.client.post(
+            f"/api/benchmarks/{self.benchmark.id}/runs/",
+            payload,
+            format="json",
+        )
+        assert response.status_code == 400
+
+
 class LLMModelListArenaEloTest(TestCase):
     def setUp(self):
         self.client = APIClient()

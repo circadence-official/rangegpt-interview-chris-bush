@@ -3,6 +3,7 @@ from app.views import (
     health_check,
     BenchmarkDetailView,
     BenchmarkListView,
+    BenchmarkRunCreateView,
     LLMModelListView,
     LLMModelDetailView,
     LLMModelCreateView,
@@ -18,5 +19,10 @@ urlpatterns = [
         "benchmarks/<int:pk>/",
         BenchmarkDetailView.as_view(),
         name="benchmark-detail",
+    ),
+    path(
+        "benchmarks/<int:pk>/runs/",
+        BenchmarkRunCreateView.as_view(),
+        name="benchmark-run-create",
     ),
 ]

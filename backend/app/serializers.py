@@ -1,5 +1,13 @@
+from django.db import transaction
 from rest_framework import serializers
-from app.models import Benchmark, LLMModel, Provider
+from app.models import (
+    Benchmark,
+    BenchmarkResult,
+    BenchmarkRun,
+    LatestBenchmarkResult,
+    LLMModel,
+    Provider,
+)
 
 
 class ProviderSerializer(serializers.ModelSerializer):
@@ -42,6 +50,54 @@ class LLMModelSerializer(serializers.ModelSerializer):
     def get_arena_elo_score(self, obj):
         score = getattr(obj, "arena_elo_score", None)
         return int(score) if score is not None else None
+
+
+class BenchmarkResultInlineSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = BenchmarkResult
+        fields = ["id", "llm_model", "score", "created_at"]
+        read_only_fields = ["id", "created_at"]
+
+
+class BenchmarkRunSerializer(serializers.ModelSerializer):
+    results = BenchmarkResultInlineSerializer(many=True)
+
+    class Meta:
+        model = BenchmarkRun
+        fields = [
+            "id",
+            "benchmark",
+            "run_at",
+            "results",
+            "created_at",
+        ]
+        read_only_fields = ["id", "benchmark", "created_at"]
+
+    def validate_results(self, value):
+        if not value:
+            raise serializers.ValidationError(
+                "A run must include at least one result."
+            )
+        model_ids = [r["llm_model"].id for r in value]
+        if len(model_ids) != len(set(model_ids)):
+            raise serializers.ValidationError(
+                "Duplicate llm_model entries in results."
+            )
+        return value
+
+    def create(self, validated_data):
+        results_data = validated_data.pop("results")
+        benchmark = self.context["benchmark"]
+        with transaction.atomic():
+            run = BenchmarkRun.objects.create(
+                benchmark=benchmark, **validated_data
+            )
+            for result_data in results_data:
+                result = BenchmarkResult.objects.create(
+                    run=run, **result_data
+                )
+                LatestBenchmarkResult.upsert_for_result(result)
+        return run
 
 
 class LLMModelListSerializer(serializers.ModelSerializer):
