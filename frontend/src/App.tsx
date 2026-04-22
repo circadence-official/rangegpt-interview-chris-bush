@@ -3,6 +3,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import Layout from "@/components/Layout";
 import ModelsList from "@/pages/ModelsList";
 import ModelDetail from "@/pages/ModelDetail";
+import BlendedLeaderboard from "@/pages/BlendedLeaderboard";
+import Compare from "@/pages/Compare";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -21,6 +23,8 @@ export default function App() {
           <Route element={<Layout />}>
             <Route index element={<ModelsList />} />
             <Route path="models/:id" element={<ModelDetail />} />
+            <Route path="leaderboard" element={<BlendedLeaderboard />} />
+            <Route path="compare" element={<Compare />} />
           </Route>
         </Routes>
       </BrowserRouter>
