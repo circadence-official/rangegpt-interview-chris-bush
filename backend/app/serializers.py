@@ -1,11 +1,17 @@
 from rest_framework import serializers
-from app.models import Provider, LLMModel
+from app.models import Benchmark, LLMModel, Provider
 
 
 class ProviderSerializer(serializers.ModelSerializer):
     class Meta:
         model = Provider
         fields = ["id", "name", "website"]
+
+
+class BenchmarkSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Benchmark
+        fields = ["id", "name", "created_at", "updated_at"]
 
 
 class LLMModelSerializer(serializers.ModelSerializer):

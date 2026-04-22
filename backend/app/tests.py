@@ -456,6 +456,54 @@ class SeedCommandTest(TestCase):
         assert BenchmarkResult.objects.count() == results_first
 
 
+class BenchmarkSerializerTest(TestCase):
+    def test_benchmark_serialization(self):
+        from app.serializers import BenchmarkSerializer
+
+        benchmark = Benchmark.objects.create(name="MMLU")
+        data = BenchmarkSerializer(benchmark).data
+        assert data["id"] == benchmark.id
+        assert data["name"] == "MMLU"
+        assert "created_at" in data
+        assert "updated_at" in data
+
+
+class BenchmarkListViewTest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        Benchmark.objects.create(name="MMLU")
+        Benchmark.objects.create(name="HumanEval")
+
+    def test_list_returns_200_with_benchmarks(self):
+        response = self.client.get("/api/benchmarks/")
+        assert response.status_code == 200
+        data = response.json()
+        names = [b["name"] for b in data]
+        assert names == ["HumanEval", "MMLU"]
+
+    def test_list_returns_empty_list_when_no_benchmarks(self):
+        Benchmark.objects.all().delete()
+        response = self.client.get("/api/benchmarks/")
+        assert response.status_code == 200
+        assert response.json() == []
+
+
+class BenchmarkDetailViewTest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.benchmark = Benchmark.objects.create(name="MMLU")
+
+    def test_detail_returns_200(self):
+        response = self.client.get(f"/api/benchmarks/{self.benchmark.id}/")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["name"] == "MMLU"
+
+    def test_detail_returns_404_for_missing(self):
+        response = self.client.get("/api/benchmarks/99999/")
+        assert response.status_code == 404
+
+
 class LLMModelListArenaEloTest(TestCase):
     def setUp(self):
         self.client = APIClient()

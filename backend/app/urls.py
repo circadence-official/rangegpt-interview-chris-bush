@@ -1,6 +1,8 @@
 from django.urls import path
 from app.views import (
     health_check,
+    BenchmarkDetailView,
+    BenchmarkListView,
     LLMModelListView,
     LLMModelDetailView,
     LLMModelCreateView,
@@ -11,4 +13,10 @@ urlpatterns = [
     path("models/", LLMModelListView.as_view(), name="model-list"),
     path("models/create/", LLMModelCreateView.as_view(), name="model-create"),
     path("models/<int:pk>/", LLMModelDetailView.as_view(), name="model-detail"),
+    path("benchmarks/", BenchmarkListView.as_view(), name="benchmark-list"),
+    path(
+        "benchmarks/<int:pk>/",
+        BenchmarkDetailView.as_view(),
+        name="benchmark-detail",
+    ),
 ]

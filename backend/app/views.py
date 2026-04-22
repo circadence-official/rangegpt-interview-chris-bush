@@ -4,8 +4,12 @@ from rest_framework import generics
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from app.constants import ARENA_ELO_BENCHMARK_NAME
-from app.models import LatestBenchmarkResult, LLMModel
-from app.serializers import LLMModelSerializer, LLMModelListSerializer
+from app.models import Benchmark, LatestBenchmarkResult, LLMModel
+from app.serializers import (
+    BenchmarkSerializer,
+    LLMModelSerializer,
+    LLMModelListSerializer,
+)
 
 
 def _llm_queryset():
@@ -46,3 +50,13 @@ class LLMModelDetailView(generics.RetrieveAPIView):
 class LLMModelCreateView(generics.CreateAPIView):
     queryset = LLMModel.objects.all()
     serializer_class = LLMModelSerializer
+
+
+class BenchmarkListView(generics.ListAPIView):
+    queryset = Benchmark.objects.all()
+    serializer_class = BenchmarkSerializer
+
+
+class BenchmarkDetailView(generics.RetrieveAPIView):
+    queryset = Benchmark.objects.all()
+    serializer_class = BenchmarkSerializer
