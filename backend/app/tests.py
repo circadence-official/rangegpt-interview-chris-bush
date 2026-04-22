@@ -504,6 +504,132 @@ class BenchmarkDetailViewTest(TestCase):
         assert response.status_code == 404
 
 
+class BenchmarkLeaderboardViewTest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.benchmark = Benchmark.objects.create(name="MMLU")
+        self.other_benchmark = Benchmark.objects.create(name="HumanEval")
+        provider = Provider.objects.create(name="Anthropic")
+        self.model_a = LLMModel.objects.create(
+            provider=provider,
+            name="Model A",
+            context_window=200000,
+            input_price_per_1m="3.0000",
+            output_price_per_1m="15.0000",
+            release_date=date(2025, 5, 22),
+        )
+        self.model_b = LLMModel.objects.create(
+            provider=provider,
+            name="Model B",
+            context_window=200000,
+            input_price_per_1m="3.0000",
+            output_price_per_1m="15.0000",
+            release_date=date(2025, 5, 22),
+        )
+        self.model_c_zero = LLMModel.objects.create(
+            provider=provider,
+            name="Model C",
+            context_window=200000,
+            input_price_per_1m="3.0000",
+            output_price_per_1m="15.0000",
+            release_date=date(2025, 5, 22),
+        )
+        self.never_evaluated = LLMModel.objects.create(
+            provider=provider,
+            name="Model Never",
+            context_window=200000,
+            input_price_per_1m="3.0000",
+            output_price_per_1m="15.0000",
+            release_date=date(2025, 5, 22),
+        )
+
+        old_run = BenchmarkRun.objects.create(
+            benchmark=self.benchmark,
+            run_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        new_run = BenchmarkRun.objects.create(
+            benchmark=self.benchmark,
+            run_at=datetime(2026, 4, 1, tzinfo=timezone.utc),
+        )
+        # model_a: older score 50, newer score 95 -- leaderboard must show 95
+        BenchmarkResult.objects.create(
+            run=old_run, llm_model=self.model_a, score=Decimal("50.00")
+        )
+        r_a = BenchmarkResult.objects.create(
+            run=new_run, llm_model=self.model_a, score=Decimal("95.00")
+        )
+        r_b = BenchmarkResult.objects.create(
+            run=new_run, llm_model=self.model_b, score=Decimal("80.00")
+        )
+        r_c = BenchmarkResult.objects.create(
+            run=new_run, llm_model=self.model_c_zero, score=Decimal("0.00")
+        )
+        for r in (r_a, r_b, r_c):
+            LatestBenchmarkResult.upsert_for_result(r)
+
+        # A result on a different benchmark should not leak into this leaderboard
+        other_run = BenchmarkRun.objects.create(
+            benchmark=self.other_benchmark,
+            run_at=datetime(2026, 4, 1, tzinfo=timezone.utc),
+        )
+        other_r = BenchmarkResult.objects.create(
+            run=other_run,
+            llm_model=self.never_evaluated,
+            score=Decimal("77.00"),
+        )
+        LatestBenchmarkResult.upsert_for_result(other_r)
+
+    def test_leaderboard_returns_participants_ranked_by_latest_score(self):
+        response = self.client.get(
+            f"/api/benchmarks/{self.benchmark.id}/leaderboard/"
+        )
+        assert response.status_code == 200
+        data = response.json()
+        names = [entry["model"]["name"] for entry in data]
+        assert names == ["Model A", "Model B", "Model C"]
+        assert data[0]["score"] == "95.0000"
+        assert data[0]["model"]["provider"]["name"] == "Anthropic"
+
+    def test_leaderboard_excludes_never_evaluated_models(self):
+        response = self.client.get(
+            f"/api/benchmarks/{self.benchmark.id}/leaderboard/"
+        )
+        names = [entry["model"]["name"] for entry in response.json()]
+        assert "Model Never" not in names
+
+    def test_leaderboard_includes_zero_scoring_participants(self):
+        response = self.client.get(
+            f"/api/benchmarks/{self.benchmark.id}/leaderboard/"
+        )
+        zero_entry = next(
+            e for e in response.json() if e["model"]["name"] == "Model C"
+        )
+        assert zero_entry["score"] == "0.0000"
+
+    def test_leaderboard_reflects_latest_run_not_older(self):
+        from django.utils.dateparse import parse_datetime
+
+        response = self.client.get(
+            f"/api/benchmarks/{self.benchmark.id}/leaderboard/"
+        )
+        top = response.json()[0]
+        assert top["model"]["name"] == "Model A"
+        assert top["score"] == "95.0000"
+        assert parse_datetime(top["measured_at"]) == datetime(
+            2026, 4, 1, tzinfo=timezone.utc
+        )
+
+    def test_leaderboard_returns_empty_for_benchmark_without_results(self):
+        empty = Benchmark.objects.create(name="GPQA")
+        response = self.client.get(f"/api/benchmarks/{empty.id}/leaderboard/")
+        assert response.status_code == 200
+        assert response.json() == []
+
+    def test_leaderboard_returns_404_for_unknown_benchmark(self):
+        response = self.client.get("/api/benchmarks/99999/leaderboard/")
+        assert response.status_code == 404
+
+
 class BenchmarkRunCreateViewTest(TestCase):
     def setUp(self):
         self.client = APIClient()

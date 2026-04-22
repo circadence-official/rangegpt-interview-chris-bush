@@ -2,6 +2,7 @@ from django.urls import path
 from app.views import (
     health_check,
     BenchmarkDetailView,
+    BenchmarkLeaderboardView,
     BenchmarkListView,
     BenchmarkRunCreateView,
     LLMModelListView,
@@ -24,5 +25,10 @@ urlpatterns = [
         "benchmarks/<int:pk>/runs/",
         BenchmarkRunCreateView.as_view(),
         name="benchmark-run-create",
+    ),
+    path(
+        "benchmarks/<int:pk>/leaderboard/",
+        BenchmarkLeaderboardView.as_view(),
+        name="benchmark-leaderboard",
     ),
 ]

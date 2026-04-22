@@ -9,6 +9,7 @@ from app.models import Benchmark, LatestBenchmarkResult, LLMModel
 from app.serializers import (
     BenchmarkRunSerializer,
     BenchmarkSerializer,
+    LeaderboardEntrySerializer,
     LLMModelSerializer,
     LLMModelListSerializer,
 )
@@ -62,6 +63,18 @@ class BenchmarkListView(generics.ListAPIView):
 class BenchmarkDetailView(generics.RetrieveAPIView):
     queryset = Benchmark.objects.all()
     serializer_class = BenchmarkSerializer
+
+
+class BenchmarkLeaderboardView(generics.ListAPIView):
+    serializer_class = LeaderboardEntrySerializer
+
+    def get_queryset(self):
+        benchmark = get_object_or_404(Benchmark, pk=self.kwargs["pk"])
+        return (
+            LatestBenchmarkResult.objects.filter(benchmark=benchmark)
+            .select_related("llm_model__provider")
+            .order_by("-score", "llm_model__name")
+        )
 
 
 class BenchmarkRunCreateView(generics.CreateAPIView):

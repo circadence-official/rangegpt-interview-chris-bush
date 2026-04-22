@@ -52,6 +52,22 @@ class LLMModelSerializer(serializers.ModelSerializer):
         return int(score) if score is not None else None
 
 
+class LeaderboardModelSerializer(serializers.ModelSerializer):
+    provider = ProviderSerializer(read_only=True)
+
+    class Meta:
+        model = LLMModel
+        fields = ["id", "name", "provider", "is_open_source"]
+
+
+class LeaderboardEntrySerializer(serializers.Serializer):
+    model = LeaderboardModelSerializer(source="llm_model", read_only=True)
+    score = serializers.DecimalField(
+        max_digits=9, decimal_places=4, read_only=True
+    )
+    measured_at = serializers.DateTimeField(read_only=True)
+
+
 class BenchmarkResultInlineSerializer(serializers.ModelSerializer):
     class Meta:
         model = BenchmarkResult
