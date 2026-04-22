@@ -1,5 +1,10 @@
+import { useMemo } from "react";
 import { useParams, Link } from "react-router";
 import { useModel } from "@/hooks/useModel";
+import {
+  useModelBenchmarkResults,
+  useModelBenchmarkSummary,
+} from "@/hooks/useModelBenchmarks";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -8,10 +13,34 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import ScoreTrajectoryChart from "@/components/ScoreTrajectoryChart";
+
+const CHART_COLOR = "#2563eb";
 
 export default function ModelDetail() {
   const { id } = useParams();
-  const { data: model, isLoading, error } = useModel(Number(id));
+  const modelId = Number(id);
+  const { data: model, isLoading, error } = useModel(modelId);
+  const summary = useModelBenchmarkSummary(modelId);
+  const history = useModelBenchmarkResults(modelId);
+
+  const benchmarksInHistory = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const item of history.data?.results ?? []) {
+      map.set(item.benchmark.id, item.benchmark.name);
+    }
+    return Array.from(map.entries()).sort(([, a], [, b]) =>
+      a.localeCompare(b),
+    );
+  }, [history.data]);
 
   if (isLoading) {
     return <p className="text-muted-foreground">Loading model...</p>;
@@ -82,6 +111,71 @@ export default function ModelDetail() {
           </div>
         </CardContent>
       </Card>
+
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle className="text-lg">Latest benchmark scores</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {summary.isLoading ? (
+            <p className="text-sm text-muted-foreground">Loading scores...</p>
+          ) : (summary.data?.length ?? 0) === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No benchmark results for this model yet.
+            </p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Benchmark</TableHead>
+                  <TableHead className="text-right">Score</TableHead>
+                  <TableHead className="text-right">Measured</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {summary.data?.map((entry) => (
+                  <TableRow key={entry.benchmark.id}>
+                    <TableCell>{entry.benchmark.name}</TableCell>
+                    <TableCell className="text-right font-mono tabular-nums">
+                      {parseFloat(entry.score).toFixed(4)}
+                    </TableCell>
+                    <TableCell className="text-right text-muted-foreground">
+                      {new Date(entry.measured_at).toLocaleDateString()}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      {benchmarksInHistory.length > 0 && (
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle className="text-lg">Score trajectory</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-6 lg:grid-cols-2">
+              {benchmarksInHistory.map(([id, name]) => (
+                <div key={id}>
+                  <h3 className="mb-2 text-sm font-medium">{name}</h3>
+                  <ScoreTrajectoryChart
+                    benchmarkId={id}
+                    series={[
+                      {
+                        label: model.name,
+                        color: CHART_COLOR,
+                        history: history.data?.results ?? [],
+                      },
+                    ]}
+                  />
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
