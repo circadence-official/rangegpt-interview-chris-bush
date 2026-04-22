@@ -1,6 +1,9 @@
 import pytest
-from django.test import TestCase
+from django.core.cache import cache
+from django.test import TestCase, override_settings
+from unittest.mock import patch
 from app.constants import ARENA_ELO_BENCHMARK_NAME
+from app.llm import InsightResult, LLMUnavailable
 from app.models import (
     Benchmark,
     BenchmarkResult,
@@ -1059,3 +1062,119 @@ class LLMModelListArenaEloTest(TestCase):
         response = self.client.get(f"/api/models/{self.model_a.id}/")
         assert response.status_code == 200
         assert response.json()["arena_elo_score"] == 1100
+
+
+@override_settings(OLLAMA_URL="http://ollama:11434", OLLAMA_MODEL="gemma3:4b")
+class LLMInsightTest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        cache.clear()
+        self.provider = Provider.objects.create(
+            name="Anthropic", website="https://anthropic.com"
+        )
+        self.model = LLMModel.objects.create(
+            provider=self.provider,
+            name="Claude Opus 4",
+            context_window=200_000,
+            input_price_per_1m=Decimal("15.00"),
+            output_price_per_1m=Decimal("75.00"),
+            release_date=date(2025, 3, 1),
+            is_open_source=False,
+        )
+
+    def test_model_insight_returns_generated_text(self):
+        fake = InsightResult(text="Strong reasoning model.", llm_model="gemma3:4b", cached=False)
+        with patch("app.views.generate_insight", return_value=fake):
+            response = self.client.get(f"/api/models/{self.model.id}/insight/")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["text"] == "Strong reasoning model."
+        assert body["llm_model"] == "gemma3:4b"
+        assert body["cached"] is False
+
+    def test_model_insight_returns_503_when_llm_unavailable(self):
+        with patch(
+            "app.views.generate_insight",
+            side_effect=LLMUnavailable("Ollama request failed"),
+        ):
+            response = self.client.get(f"/api/models/{self.model.id}/insight/")
+        assert response.status_code == 503
+        assert "Ollama" in response.json()["detail"]
+
+    def test_model_insight_404_for_unknown_model(self):
+        response = self.client.get("/api/models/9999/insight/")
+        assert response.status_code == 404
+
+    def test_comparison_insight_requires_distinct_ids(self):
+        response = self.client.get(
+            f"/api/insights/comparison/?a={self.model.id}&b={self.model.id}"
+        )
+        assert response.status_code == 400
+
+    def test_comparison_insight_requires_both_params(self):
+        response = self.client.get("/api/insights/comparison/?a=1")
+        assert response.status_code == 400
+
+    def test_comparison_insight_rejects_non_integer_ids(self):
+        response = self.client.get("/api/insights/comparison/?a=abc&b=def")
+        assert response.status_code == 400
+
+    def test_comparison_insight_returns_text(self):
+        other = LLMModel.objects.create(
+            provider=self.provider,
+            name="Claude Sonnet 4",
+            context_window=200_000,
+            input_price_per_1m=Decimal("3.00"),
+            output_price_per_1m=Decimal("15.00"),
+            release_date=date(2025, 3, 1),
+            is_open_source=False,
+        )
+        fake = InsightResult(
+            text="Opus wins on reasoning; Sonnet wins on price.",
+            llm_model="gemma3:4b",
+            cached=True,
+        )
+        with patch("app.views.generate_insight", return_value=fake):
+            response = self.client.get(
+                f"/api/insights/comparison/?a={self.model.id}&b={other.id}"
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["text"].startswith("Opus")
+        assert body["cached"] is True
+
+
+@override_settings(OLLAMA_URL="", OLLAMA_MODEL="gemma3:4b")
+class LLMModuleWhenUnconfiguredTest(TestCase):
+    def test_generate_insight_raises_when_url_missing(self):
+        from app.llm import generate_insight
+
+        with pytest.raises(LLMUnavailable):
+            generate_insight(prompt="hi", subject="test")
+
+
+@override_settings(OLLAMA_URL="http://ollama:11434", OLLAMA_MODEL="gemma3:4b")
+class LLMModuleCachingTest(TestCase):
+    def setUp(self):
+        cache.clear()
+
+    def test_second_call_is_cached(self):
+        from app.llm import generate_insight
+
+        with patch("app.llm._call_ollama", return_value="cached text") as mocked:
+            first = generate_insight(prompt="p", subject="test")
+            second = generate_insight(prompt="p", subject="test")
+        assert first.cached is False
+        assert second.cached is True
+        assert second.text == "cached text"
+        assert mocked.call_count == 1
+
+    def test_prompt_change_invalidates_cache(self):
+        from app.llm import generate_insight
+
+        with patch("app.llm._call_ollama", side_effect=["a", "b"]) as mocked:
+            first = generate_insight(prompt="p1", subject="test")
+            second = generate_insight(prompt="p2", subject="test")
+        assert first.text == "a"
+        assert second.text == "b"
+        assert mocked.call_count == 2

@@ -5,8 +5,10 @@ from app.views import (
     BenchmarkLeaderboardView,
     BenchmarkListView,
     BenchmarkRunCreateView,
+    ComparisonInsightView,
     LLMModelBenchmarkResultsView,
     LLMModelBenchmarkSummaryView,
+    LLMModelInsightView,
     LLMModelListView,
     LLMModelDetailView,
     LLMModelCreateView,
@@ -26,6 +28,16 @@ urlpatterns = [
         "models/<int:pk>/benchmark-summary/",
         LLMModelBenchmarkSummaryView.as_view(),
         name="model-benchmark-summary",
+    ),
+    path(
+        "models/<int:pk>/insight/",
+        LLMModelInsightView.as_view(),
+        name="model-insight",
+    ),
+    path(
+        "insights/comparison/",
+        ComparisonInsightView.as_view(),
+        name="comparison-insight",
     ),
     path("benchmarks/", BenchmarkListView.as_view(), name="benchmark-list"),
     path(
