@@ -1,7 +1,15 @@
 import pytest
 from django.test import TestCase
-from app.models import Provider, LLMModel
-from datetime import date
+from app.constants import ARENA_ELO_BENCHMARK_NAME
+from app.models import (
+    Benchmark,
+    BenchmarkResult,
+    BenchmarkRun,
+    LatestBenchmarkResult,
+    LLMModel,
+    Provider,
+)
+from datetime import date, datetime, timezone
 from rest_framework.test import APIClient
 from decimal import Decimal
 
@@ -44,7 +52,6 @@ class LLMModelModelTest(TestCase):
             context_window=200000,
             input_price_per_1m="3.0000",
             output_price_per_1m="15.0000",
-            arena_elo_score=1320,
             release_date=date(2025, 5, 22),
             is_open_source=False,
         )
@@ -54,43 +61,6 @@ class LLMModelModelTest(TestCase):
         assert model.created_at is not None
         assert model.updated_at is not None
         assert str(model) == "Anthropic - Claude Sonnet 4"
-
-    def test_llm_model_ordering_by_elo(self):
-        LLMModel.objects.create(
-            provider=self.provider,
-            name="Model A",
-            description="",
-            context_window=100000,
-            input_price_per_1m="1.0000",
-            output_price_per_1m="5.0000",
-            arena_elo_score=1100,
-            release_date=date(2025, 1, 1),
-        )
-        LLMModel.objects.create(
-            provider=self.provider,
-            name="Model B",
-            description="",
-            context_window=100000,
-            input_price_per_1m="1.0000",
-            output_price_per_1m="5.0000",
-            arena_elo_score=1300,
-            release_date=date(2025, 1, 1),
-        )
-        models = list(LLMModel.objects.values_list("name", flat=True))
-        assert models == ["Model B", "Model A"]
-
-    def test_llm_model_nullable_elo(self):
-        model = LLMModel.objects.create(
-            provider=self.provider,
-            name="New Model",
-            description="",
-            context_window=100000,
-            input_price_per_1m="1.0000",
-            output_price_per_1m="5.0000",
-            arena_elo_score=None,
-            release_date=date(2025, 1, 1),
-        )
-        assert model.arena_elo_score is None
 
     def test_unique_together_provider_name(self):
         LLMModel.objects.create(
@@ -112,6 +82,185 @@ class LLMModelModelTest(TestCase):
                 output_price_per_1m="15.0000",
                 release_date=date(2025, 5, 22),
             )
+
+
+class BenchmarkModelTest(TestCase):
+    def test_create_benchmark(self):
+        benchmark = Benchmark.objects.create(name="MMLU")
+        assert benchmark.name == "MMLU"
+        assert benchmark.created_at is not None
+        assert str(benchmark) == "MMLU"
+
+    def test_benchmark_name_unique(self):
+        Benchmark.objects.create(name="MMLU")
+        with pytest.raises(Exception):
+            Benchmark.objects.create(name="MMLU")
+
+
+class BenchmarkRunModelTest(TestCase):
+    def setUp(self):
+        self.benchmark = Benchmark.objects.create(name="MMLU")
+
+    def test_create_run(self):
+        run = BenchmarkRun.objects.create(
+            benchmark=self.benchmark,
+            run_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        assert run.benchmark == self.benchmark
+        assert run.run_at == datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    def test_runs_ordered_newest_first(self):
+        BenchmarkRun.objects.create(
+            benchmark=self.benchmark,
+            run_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        BenchmarkRun.objects.create(
+            benchmark=self.benchmark,
+            run_at=datetime(2026, 3, 1, tzinfo=timezone.utc),
+        )
+        run_at_values = [r.run_at.month for r in BenchmarkRun.objects.all()]
+        assert run_at_values == [3, 1]
+
+
+class BenchmarkResultModelTest(TestCase):
+    def setUp(self):
+        self.benchmark = Benchmark.objects.create(name="MMLU")
+        self.run = BenchmarkRun.objects.create(
+            benchmark=self.benchmark,
+            run_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        provider = Provider.objects.create(name="Anthropic")
+        self.model = LLMModel.objects.create(
+            provider=provider,
+            name="Claude Sonnet 4",
+            context_window=200000,
+            input_price_per_1m="3.0000",
+            output_price_per_1m="15.0000",
+            release_date=date(2025, 5, 22),
+        )
+
+    def test_create_result(self):
+        result = BenchmarkResult.objects.create(
+            run=self.run,
+            llm_model=self.model,
+            score=Decimal("87.5000"),
+        )
+        assert result.score == Decimal("87.5000")
+        assert result.run == self.run
+        assert result.llm_model == self.model
+
+    def test_result_unique_per_run_and_model(self):
+        BenchmarkResult.objects.create(
+            run=self.run, llm_model=self.model, score=Decimal("87.5000")
+        )
+        with pytest.raises(Exception):
+            BenchmarkResult.objects.create(
+                run=self.run, llm_model=self.model, score=Decimal("88.0000")
+            )
+
+
+class LatestBenchmarkResultModelTest(TestCase):
+    def setUp(self):
+        self.benchmark = Benchmark.objects.create(name="MMLU")
+        self.run = BenchmarkRun.objects.create(
+            benchmark=self.benchmark,
+            run_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        provider = Provider.objects.create(name="Anthropic")
+        self.model = LLMModel.objects.create(
+            provider=provider,
+            name="Claude Sonnet 4",
+            context_window=200000,
+            input_price_per_1m="3.0000",
+            output_price_per_1m="15.0000",
+            release_date=date(2025, 5, 22),
+        )
+        self.result = BenchmarkResult.objects.create(
+            run=self.run, llm_model=self.model, score=Decimal("87.5000")
+        )
+
+    def test_create_latest(self):
+        latest = LatestBenchmarkResult.objects.create(
+            benchmark=self.benchmark,
+            llm_model=self.model,
+            result=self.result,
+            score=self.result.score,
+            measured_at=self.run.run_at,
+        )
+        assert latest.score == Decimal("87.5000")
+        assert latest.measured_at == self.run.run_at
+
+    def test_latest_unique_per_benchmark_and_model(self):
+        LatestBenchmarkResult.objects.create(
+            benchmark=self.benchmark,
+            llm_model=self.model,
+            result=self.result,
+            score=self.result.score,
+            measured_at=self.run.run_at,
+        )
+        with pytest.raises(Exception):
+            LatestBenchmarkResult.objects.create(
+                benchmark=self.benchmark,
+                llm_model=self.model,
+                result=self.result,
+                score=self.result.score,
+                measured_at=self.run.run_at,
+            )
+
+
+class LatestBenchmarkResultUpsertTest(TestCase):
+    def setUp(self):
+        self.benchmark = Benchmark.objects.create(name="MMLU")
+        provider = Provider.objects.create(name="Anthropic")
+        self.model = LLMModel.objects.create(
+            provider=provider,
+            name="Claude Sonnet 4",
+            context_window=200000,
+            input_price_per_1m="3.0000",
+            output_price_per_1m="15.0000",
+            release_date=date(2025, 5, 22),
+        )
+
+    def _result(self, run_at, score):
+        run = BenchmarkRun.objects.create(
+            benchmark=self.benchmark, run_at=run_at
+        )
+        return BenchmarkResult.objects.create(
+            run=run, llm_model=self.model, score=Decimal(score)
+        )
+
+    def test_first_result_populates_cache(self):
+        result = self._result(datetime(2026, 1, 1, tzinfo=timezone.utc), "80.0")
+        latest = LatestBenchmarkResult.upsert_for_result(result)
+        assert latest.score == Decimal("80.0000")
+        assert latest.result == result
+        assert LatestBenchmarkResult.objects.count() == 1
+
+    def test_newer_result_overwrites_cache(self):
+        older = self._result(datetime(2026, 1, 1, tzinfo=timezone.utc), "80.0")
+        LatestBenchmarkResult.upsert_for_result(older)
+        newer = self._result(datetime(2026, 2, 1, tzinfo=timezone.utc), "85.0")
+        latest = LatestBenchmarkResult.upsert_for_result(newer)
+        assert latest.score == Decimal("85.0000")
+        assert latest.result == newer
+        assert LatestBenchmarkResult.objects.count() == 1
+
+    def test_older_backfill_does_not_clobber(self):
+        newer = self._result(datetime(2026, 2, 1, tzinfo=timezone.utc), "85.0")
+        LatestBenchmarkResult.upsert_for_result(newer)
+        older = self._result(datetime(2026, 1, 1, tzinfo=timezone.utc), "80.0")
+        latest = LatestBenchmarkResult.upsert_for_result(older)
+        assert latest.score == Decimal("85.0000")
+        assert latest.result == newer
+        assert LatestBenchmarkResult.objects.count() == 1
+
+    def test_same_timestamp_is_noop(self):
+        existing = self._result(datetime(2026, 1, 1, tzinfo=timezone.utc), "80.0")
+        LatestBenchmarkResult.upsert_for_result(existing)
+        duplicate = self._result(datetime(2026, 1, 1, tzinfo=timezone.utc), "99.0")
+        latest = LatestBenchmarkResult.upsert_for_result(duplicate)
+        assert latest.score == Decimal("80.0000")
+        assert latest.result == existing
 
 
 class ProviderSerializerTest(TestCase):
@@ -136,7 +285,6 @@ class LLMModelSerializerTest(TestCase):
             context_window=200000,
             input_price_per_1m="3.0000",
             output_price_per_1m="15.0000",
-            arena_elo_score=1320,
             release_date=date(2025, 5, 22),
             is_open_source=False,
         )
@@ -181,7 +329,6 @@ class LLMModelListViewTest(TestCase):
             context_window=200000,
             input_price_per_1m="3.0000",
             output_price_per_1m="15.0000",
-            arena_elo_score=1320,
             release_date=date(2025, 5, 22),
         )
 
@@ -205,7 +352,6 @@ class LLMModelDetailViewTest(TestCase):
             context_window=200000,
             input_price_per_1m="3.0000",
             output_price_per_1m="15.0000",
-            arena_elo_score=1320,
             release_date=date(2025, 5, 22),
         )
 
@@ -237,7 +383,6 @@ class LLMModelCreateViewTest(TestCase):
                 "context_window": 200000,
                 "input_price_per_1m": "15.0000",
                 "output_price_per_1m": "75.0000",
-                "arena_elo_score": 1350,
                 "release_date": "2025-05-22",
                 "is_open_source": False,
             },
@@ -264,11 +409,653 @@ class SeedCommandTest(TestCase):
         assert Provider.objects.count() >= 5
         assert LLMModel.objects.count() >= 15
 
+    def test_seed_populates_arena_elo_benchmark(self):
+        from django.core.management import call_command
+
+        call_command("seed")
+        arena = Benchmark.objects.get(name=ARENA_ELO_BENCHMARK_NAME)
+        assert LatestBenchmarkResult.objects.filter(benchmark=arena).count() >= 15
+
+    def test_seed_populates_additional_benchmarks_with_history(self):
+        from django.core.management import call_command
+
+        call_command("seed")
+        for name in ("MMLU", "HumanEval", "GPQA Diamond"):
+            benchmark = Benchmark.objects.get(name=name)
+            assert benchmark.runs.count() == 3
+            assert BenchmarkResult.objects.filter(run__benchmark=benchmark).count() == 45
+            assert (
+                LatestBenchmarkResult.objects.filter(benchmark=benchmark).count()
+                == 15
+            )
+
+    def test_seed_latest_cache_points_at_newest_run(self):
+        from django.core.management import call_command
+
+        call_command("seed")
+        mmlu = Benchmark.objects.get(name="MMLU")
+        latest_measured_at = (
+            LatestBenchmarkResult.objects.filter(benchmark=mmlu)
+            .values_list("measured_at", flat=True)
+            .distinct()
+        )
+        assert list(latest_measured_at) == [
+            datetime(2026, 4, 1, tzinfo=timezone.utc)
+        ]
+
     def test_seed_is_idempotent(self):
         from django.core.management import call_command
 
         call_command("seed")
-        count_first = LLMModel.objects.count()
+        models_first = LLMModel.objects.count()
+        runs_first = BenchmarkRun.objects.count()
+        results_first = BenchmarkResult.objects.count()
         call_command("seed")
-        count_second = LLMModel.objects.count()
-        assert count_first == count_second
+        assert LLMModel.objects.count() == models_first
+        assert BenchmarkRun.objects.count() == runs_first
+        assert BenchmarkResult.objects.count() == results_first
+
+
+class BenchmarkSerializerTest(TestCase):
+    def test_benchmark_serialization(self):
+        from app.serializers import BenchmarkSerializer
+
+        benchmark = Benchmark.objects.create(name="MMLU")
+        data = BenchmarkSerializer(benchmark).data
+        assert data["id"] == benchmark.id
+        assert data["name"] == "MMLU"
+        assert "created_at" in data
+        assert "updated_at" in data
+
+
+class BenchmarkListViewTest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        Benchmark.objects.create(name="MMLU")
+        Benchmark.objects.create(name="HumanEval")
+
+    def test_list_returns_200_with_benchmarks(self):
+        response = self.client.get("/api/benchmarks/")
+        assert response.status_code == 200
+        data = response.json()
+        names = [b["name"] for b in data]
+        assert names == ["HumanEval", "MMLU"]
+
+    def test_list_returns_empty_list_when_no_benchmarks(self):
+        Benchmark.objects.all().delete()
+        response = self.client.get("/api/benchmarks/")
+        assert response.status_code == 200
+        assert response.json() == []
+
+
+class BenchmarkDetailViewTest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.benchmark = Benchmark.objects.create(name="MMLU")
+
+    def test_detail_returns_200(self):
+        response = self.client.get(f"/api/benchmarks/{self.benchmark.id}/")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["name"] == "MMLU"
+
+    def test_detail_returns_404_for_missing(self):
+        response = self.client.get("/api/benchmarks/99999/")
+        assert response.status_code == 404
+
+
+class LLMModelBenchmarkSummaryViewTest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        provider = Provider.objects.create(name="Anthropic")
+        self.model = LLMModel.objects.create(
+            provider=provider,
+            name="Claude Sonnet 4",
+            context_window=200000,
+            input_price_per_1m="3.0000",
+            output_price_per_1m="15.0000",
+            release_date=date(2025, 5, 22),
+        )
+        self.other_model = LLMModel.objects.create(
+            provider=provider,
+            name="Claude Opus 4",
+            context_window=200000,
+            input_price_per_1m="15.0000",
+            output_price_per_1m="75.0000",
+            release_date=date(2025, 5, 22),
+        )
+        self.mmlu = Benchmark.objects.create(name="MMLU")
+        self.humaneval = Benchmark.objects.create(name="HumanEval")
+        self.gpqa = Benchmark.objects.create(name="GPQA")
+
+        # Older MMLU run should be shadowed by the newer one in the summary
+        self._submit(self.mmlu, self.model,
+                     datetime(2026, 1, 1, tzinfo=timezone.utc), "80.00")
+        self._submit(self.mmlu, self.model,
+                     datetime(2026, 4, 1, tzinfo=timezone.utc), "88.00")
+        self._submit(self.humaneval, self.model,
+                     datetime(2026, 2, 1, tzinfo=timezone.utc), "70.00")
+        # gpqa: model never evaluated -- must not appear
+        # other_model MMLU result: must not appear in this model's summary
+        self._submit(self.mmlu, self.other_model,
+                     datetime(2026, 3, 1, tzinfo=timezone.utc), "95.00")
+
+    def _submit(self, benchmark, model, run_at, score):
+        run, _ = BenchmarkRun.objects.get_or_create(
+            benchmark=benchmark, run_at=run_at
+        )
+        result = BenchmarkResult.objects.create(
+            run=run, llm_model=model, score=Decimal(score)
+        )
+        LatestBenchmarkResult.upsert_for_result(result)
+        return result
+
+    def test_summary_returns_latest_score_per_benchmark(self):
+        response = self.client.get(
+            f"/api/models/{self.model.id}/benchmark-summary/"
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert isinstance(data, list)
+        by_name = {e["benchmark"]["name"]: e for e in data}
+        assert set(by_name.keys()) == {"MMLU", "HumanEval"}
+        assert by_name["MMLU"]["score"] == "88.0000"
+        assert by_name["HumanEval"]["score"] == "70.0000"
+
+    def test_summary_entry_includes_measured_at_timestamp(self):
+        from django.utils.dateparse import parse_datetime
+
+        response = self.client.get(
+            f"/api/models/{self.model.id}/benchmark-summary/"
+        )
+        entry = next(
+            e for e in response.json() if e["benchmark"]["name"] == "MMLU"
+        )
+        assert parse_datetime(entry["measured_at"]) == datetime(
+            2026, 4, 1, tzinfo=timezone.utc
+        )
+
+    def test_summary_excludes_never_evaluated_benchmarks(self):
+        response = self.client.get(
+            f"/api/models/{self.model.id}/benchmark-summary/"
+        )
+        names = [e["benchmark"]["name"] for e in response.json()]
+        assert "GPQA" not in names
+
+    def test_summary_is_alphabetized_by_benchmark_name(self):
+        response = self.client.get(
+            f"/api/models/{self.model.id}/benchmark-summary/"
+        )
+        names = [e["benchmark"]["name"] for e in response.json()]
+        assert names == sorted(names)
+
+    def test_summary_returns_404_for_unknown_model(self):
+        response = self.client.get("/api/models/99999/benchmark-summary/")
+        assert response.status_code == 404
+
+    def test_summary_returns_empty_for_model_with_no_evaluations(self):
+        bare = LLMModel.objects.create(
+            provider=self.model.provider,
+            name="Bare",
+            context_window=1000,
+            input_price_per_1m="0.0000",
+            output_price_per_1m="0.0000",
+            release_date=date(2025, 1, 1),
+        )
+        response = self.client.get(f"/api/models/{bare.id}/benchmark-summary/")
+        assert response.status_code == 200
+        assert response.json() == []
+
+
+class LLMModelBenchmarkResultsViewTest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        provider = Provider.objects.create(name="Anthropic")
+        self.model = LLMModel.objects.create(
+            provider=provider,
+            name="Claude Sonnet 4",
+            context_window=200000,
+            input_price_per_1m="3.0000",
+            output_price_per_1m="15.0000",
+            release_date=date(2025, 5, 22),
+        )
+        self.other_model = LLMModel.objects.create(
+            provider=provider,
+            name="Claude Opus 4",
+            context_window=200000,
+            input_price_per_1m="15.0000",
+            output_price_per_1m="75.0000",
+            release_date=date(2025, 5, 22),
+        )
+        self.mmlu = Benchmark.objects.create(name="MMLU")
+        self.humaneval = Benchmark.objects.create(name="HumanEval")
+
+        self.r_old_mmlu = self._result(
+            self.mmlu, self.model, datetime(2026, 1, 1, tzinfo=timezone.utc),
+            "80.00",
+        )
+        self.r_new_mmlu = self._result(
+            self.mmlu, self.model, datetime(2026, 4, 1, tzinfo=timezone.utc),
+            "85.00",
+        )
+        self.r_humaneval = self._result(
+            self.humaneval, self.model,
+            datetime(2026, 2, 1, tzinfo=timezone.utc), "70.00",
+        )
+        # Noise: a different model's result should not appear
+        self._result(
+            self.mmlu, self.other_model,
+            datetime(2026, 3, 1, tzinfo=timezone.utc), "90.00",
+        )
+
+    def _result(self, benchmark, model, run_at, score):
+        run, _ = BenchmarkRun.objects.get_or_create(
+            benchmark=benchmark, run_at=run_at
+        )
+        return BenchmarkResult.objects.create(
+            run=run, llm_model=model, score=Decimal(score)
+        )
+
+    def test_history_returns_paginated_chronological_results(self):
+        response = self.client.get(
+            f"/api/models/{self.model.id}/benchmark-results/"
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert set(data.keys()) == {"count", "next", "previous", "results"}
+        assert data["count"] == 3
+        benchmarks_in_order = [r["benchmark"]["name"] for r in data["results"]]
+        assert benchmarks_in_order == ["MMLU", "HumanEval", "MMLU"]
+        scores = [r["score"] for r in data["results"]]
+        assert scores == ["80.0000", "70.0000", "85.0000"]
+
+    def test_history_includes_run_and_benchmark_refs(self):
+        response = self.client.get(
+            f"/api/models/{self.model.id}/benchmark-results/"
+        )
+        first = response.json()["results"][0]
+        assert "run_at" in first["run"]
+        assert first["benchmark"]["id"] == self.mmlu.id
+
+    def test_history_filters_by_benchmark_query_param(self):
+        response = self.client.get(
+            f"/api/models/{self.model.id}/benchmark-results/"
+            f"?benchmark={self.mmlu.id}"
+        )
+        data = response.json()
+        assert data["count"] == 2
+        names = {r["benchmark"]["name"] for r in data["results"]}
+        assert names == {"MMLU"}
+
+    def test_history_excludes_other_models_results(self):
+        response = self.client.get(
+            f"/api/models/{self.model.id}/benchmark-results/"
+        )
+        scores = [r["score"] for r in response.json()["results"]]
+        assert "90.0000" not in scores
+
+    def test_history_page_size_query_param_paginates(self):
+        response = self.client.get(
+            f"/api/models/{self.model.id}/benchmark-results/?page_size=2"
+        )
+        data = response.json()
+        assert data["count"] == 3
+        assert len(data["results"]) == 2
+        assert data["next"] is not None
+
+    def test_history_returns_404_for_unknown_model(self):
+        response = self.client.get("/api/models/99999/benchmark-results/")
+        assert response.status_code == 404
+
+    def test_history_returns_empty_results_when_model_has_none(self):
+        bare_model = LLMModel.objects.create(
+            provider=self.model.provider,
+            name="Bare",
+            context_window=1000,
+            input_price_per_1m="0.0000",
+            output_price_per_1m="0.0000",
+            release_date=date(2025, 1, 1),
+        )
+        response = self.client.get(
+            f"/api/models/{bare_model.id}/benchmark-results/"
+        )
+        assert response.status_code == 200
+        assert response.json()["count"] == 0
+        assert response.json()["results"] == []
+
+
+class BenchmarkLeaderboardViewTest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.benchmark = Benchmark.objects.create(name="MMLU")
+        self.other_benchmark = Benchmark.objects.create(name="HumanEval")
+        provider = Provider.objects.create(name="Anthropic")
+        self.model_a = LLMModel.objects.create(
+            provider=provider,
+            name="Model A",
+            context_window=200000,
+            input_price_per_1m="3.0000",
+            output_price_per_1m="15.0000",
+            release_date=date(2025, 5, 22),
+        )
+        self.model_b = LLMModel.objects.create(
+            provider=provider,
+            name="Model B",
+            context_window=200000,
+            input_price_per_1m="3.0000",
+            output_price_per_1m="15.0000",
+            release_date=date(2025, 5, 22),
+        )
+        self.model_c_zero = LLMModel.objects.create(
+            provider=provider,
+            name="Model C",
+            context_window=200000,
+            input_price_per_1m="3.0000",
+            output_price_per_1m="15.0000",
+            release_date=date(2025, 5, 22),
+        )
+        self.never_evaluated = LLMModel.objects.create(
+            provider=provider,
+            name="Model Never",
+            context_window=200000,
+            input_price_per_1m="3.0000",
+            output_price_per_1m="15.0000",
+            release_date=date(2025, 5, 22),
+        )
+
+        old_run = BenchmarkRun.objects.create(
+            benchmark=self.benchmark,
+            run_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        new_run = BenchmarkRun.objects.create(
+            benchmark=self.benchmark,
+            run_at=datetime(2026, 4, 1, tzinfo=timezone.utc),
+        )
+        # model_a: older score 50, newer score 95 -- leaderboard must show 95
+        BenchmarkResult.objects.create(
+            run=old_run, llm_model=self.model_a, score=Decimal("50.00")
+        )
+        r_a = BenchmarkResult.objects.create(
+            run=new_run, llm_model=self.model_a, score=Decimal("95.00")
+        )
+        r_b = BenchmarkResult.objects.create(
+            run=new_run, llm_model=self.model_b, score=Decimal("80.00")
+        )
+        r_c = BenchmarkResult.objects.create(
+            run=new_run, llm_model=self.model_c_zero, score=Decimal("0.00")
+        )
+        for r in (r_a, r_b, r_c):
+            LatestBenchmarkResult.upsert_for_result(r)
+
+        # A result on a different benchmark should not leak into this leaderboard
+        other_run = BenchmarkRun.objects.create(
+            benchmark=self.other_benchmark,
+            run_at=datetime(2026, 4, 1, tzinfo=timezone.utc),
+        )
+        other_r = BenchmarkResult.objects.create(
+            run=other_run,
+            llm_model=self.never_evaluated,
+            score=Decimal("77.00"),
+        )
+        LatestBenchmarkResult.upsert_for_result(other_r)
+
+    def test_leaderboard_returns_participants_ranked_by_latest_score(self):
+        response = self.client.get(
+            f"/api/benchmarks/{self.benchmark.id}/leaderboard/"
+        )
+        assert response.status_code == 200
+        data = response.json()
+        names = [entry["model"]["name"] for entry in data]
+        assert names == ["Model A", "Model B", "Model C"]
+        assert data[0]["score"] == "95.0000"
+        assert data[0]["model"]["provider"]["name"] == "Anthropic"
+
+    def test_leaderboard_excludes_never_evaluated_models(self):
+        response = self.client.get(
+            f"/api/benchmarks/{self.benchmark.id}/leaderboard/"
+        )
+        names = [entry["model"]["name"] for entry in response.json()]
+        assert "Model Never" not in names
+
+    def test_leaderboard_includes_zero_scoring_participants(self):
+        response = self.client.get(
+            f"/api/benchmarks/{self.benchmark.id}/leaderboard/"
+        )
+        zero_entry = next(
+            e for e in response.json() if e["model"]["name"] == "Model C"
+        )
+        assert zero_entry["score"] == "0.0000"
+
+    def test_leaderboard_reflects_latest_run_not_older(self):
+        from django.utils.dateparse import parse_datetime
+
+        response = self.client.get(
+            f"/api/benchmarks/{self.benchmark.id}/leaderboard/"
+        )
+        top = response.json()[0]
+        assert top["model"]["name"] == "Model A"
+        assert top["score"] == "95.0000"
+        assert parse_datetime(top["measured_at"]) == datetime(
+            2026, 4, 1, tzinfo=timezone.utc
+        )
+
+    def test_leaderboard_returns_empty_for_benchmark_without_results(self):
+        empty = Benchmark.objects.create(name="GPQA")
+        response = self.client.get(f"/api/benchmarks/{empty.id}/leaderboard/")
+        assert response.status_code == 200
+        assert response.json() == []
+
+    def test_leaderboard_returns_404_for_unknown_benchmark(self):
+        response = self.client.get("/api/benchmarks/99999/leaderboard/")
+        assert response.status_code == 404
+
+
+class BenchmarkRunCreateViewTest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.benchmark = Benchmark.objects.create(name="MMLU")
+        provider = Provider.objects.create(name="Anthropic")
+        self.model_a = LLMModel.objects.create(
+            provider=provider,
+            name="Claude Sonnet 4",
+            context_window=200000,
+            input_price_per_1m="3.0000",
+            output_price_per_1m="15.0000",
+            release_date=date(2025, 5, 22),
+        )
+        self.model_b = LLMModel.objects.create(
+            provider=provider,
+            name="Claude Opus 4",
+            context_window=200000,
+            input_price_per_1m="15.0000",
+            output_price_per_1m="75.0000",
+            release_date=date(2025, 5, 22),
+        )
+
+    def _payload(self, **overrides):
+        payload = {
+            "run_at": "2026-04-01T00:00:00Z",
+            "results": [
+                {
+                    "llm_model": self.model_a.id,
+                    "score": "87.50",
+                },
+                {
+                    "llm_model": self.model_b.id,
+                    "score": "92.00",
+                },
+            ],
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_create_run_persists_run_results_and_latest_cache(self):
+        response = self.client.post(
+            f"/api/benchmarks/{self.benchmark.id}/runs/",
+            self._payload(),
+            format="json",
+        )
+        assert response.status_code == 201, response.content
+        data = response.json()
+        assert data["benchmark"] == self.benchmark.id
+        assert len(data["results"]) == 2
+
+        assert BenchmarkRun.objects.filter(benchmark=self.benchmark).count() == 1
+        assert BenchmarkResult.objects.count() == 2
+        # latest cache populated for both models
+        latest = LatestBenchmarkResult.objects.filter(benchmark=self.benchmark)
+        assert latest.count() == 2
+        by_model = {l.llm_model_id: l.score for l in latest}
+        assert by_model[self.model_a.id] == Decimal("87.5000")
+        assert by_model[self.model_b.id] == Decimal("92.0000")
+
+    def test_resubmit_preserves_history_and_refreshes_cache(self):
+        self.client.post(
+            f"/api/benchmarks/{self.benchmark.id}/runs/",
+            self._payload(run_at="2026-01-01T00:00:00Z"),
+            format="json",
+        )
+        self.client.post(
+            f"/api/benchmarks/{self.benchmark.id}/runs/",
+            self._payload(
+                run_at="2026-04-01T00:00:00Z",
+                results=[
+                    {
+                        "llm_model": self.model_a.id,
+                        "score": "90.00",
+                    },
+                ],
+            ),
+            format="json",
+        )
+
+        runs = BenchmarkRun.objects.filter(benchmark=self.benchmark).order_by(
+            "run_at"
+        )
+        assert runs.count() == 2
+        # Both historical results retained
+        assert (
+            BenchmarkResult.objects.filter(
+                llm_model=self.model_a, run__benchmark=self.benchmark
+            ).count()
+            == 2
+        )
+        # Latest cache points at the newer run for model_a, original for model_b
+        latest_a = LatestBenchmarkResult.objects.get(
+            benchmark=self.benchmark, llm_model=self.model_a
+        )
+        latest_b = LatestBenchmarkResult.objects.get(
+            benchmark=self.benchmark, llm_model=self.model_b
+        )
+        assert latest_a.score == Decimal("90.0000")
+        assert latest_a.measured_at == datetime(
+            2026, 4, 1, tzinfo=timezone.utc
+        )
+        assert latest_b.score == Decimal("92.0000")
+
+    def test_create_run_returns_404_for_unknown_benchmark(self):
+        response = self.client.post(
+            "/api/benchmarks/99999/runs/", self._payload(), format="json"
+        )
+        assert response.status_code == 404
+
+    def test_create_run_rejects_empty_results(self):
+        response = self.client.post(
+            f"/api/benchmarks/{self.benchmark.id}/runs/",
+            self._payload(results=[]),
+            format="json",
+        )
+        assert response.status_code == 400
+        assert "results" in response.json()
+
+    def test_create_run_rejects_duplicate_model_in_results(self):
+        payload = self._payload(
+            results=[
+                {"llm_model": self.model_a.id, "score": "80.0"},
+                {"llm_model": self.model_a.id, "score": "85.0"},
+            ]
+        )
+        response = self.client.post(
+            f"/api/benchmarks/{self.benchmark.id}/runs/",
+            payload,
+            format="json",
+        )
+        assert response.status_code == 400
+        assert "results" in response.json()
+        # Nothing should have been persisted
+        assert BenchmarkRun.objects.count() == 0
+        assert BenchmarkResult.objects.count() == 0
+
+    def test_create_run_rejects_missing_run_at(self):
+        payload = self._payload()
+        payload.pop("run_at")
+        response = self.client.post(
+            f"/api/benchmarks/{self.benchmark.id}/runs/",
+            payload,
+            format="json",
+        )
+        assert response.status_code == 400
+
+
+class LLMModelListArenaEloTest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        provider = Provider.objects.create(name="TestProvider")
+        self.model_a = LLMModel.objects.create(
+            provider=provider,
+            name="Model A",
+            context_window=100000,
+            input_price_per_1m="1.0000",
+            output_price_per_1m="5.0000",
+            release_date=date(2025, 1, 1),
+        )
+        self.model_b = LLMModel.objects.create(
+            provider=provider,
+            name="Model B",
+            context_window=100000,
+            input_price_per_1m="1.0000",
+            output_price_per_1m="5.0000",
+            release_date=date(2025, 1, 1),
+        )
+        self.model_c = LLMModel.objects.create(
+            provider=provider,
+            name="Model C",
+            context_window=100000,
+            input_price_per_1m="1.0000",
+            output_price_per_1m="5.0000",
+            release_date=date(2025, 1, 1),
+        )
+        arena = Benchmark.objects.create(name=ARENA_ELO_BENCHMARK_NAME)
+        run = BenchmarkRun.objects.create(
+            benchmark=arena,
+            run_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        for model, score in ((self.model_a, 1100), (self.model_b, 1300)):
+            result = BenchmarkResult.objects.create(
+                run=run, llm_model=model, score=Decimal(score)
+            )
+            LatestBenchmarkResult.objects.create(
+                benchmark=arena,
+                llm_model=model,
+                result=result,
+                score=Decimal(score),
+                measured_at=run.run_at,
+            )
+
+    def test_list_orders_by_arena_elo_desc_nulls_last(self):
+        response = self.client.get("/api/models/")
+        assert response.status_code == 200
+        names = [m["name"] for m in response.json()]
+        assert names == ["Model B", "Model A", "Model C"]
+
+    def test_list_exposes_arena_elo_from_benchmark_cache(self):
+        response = self.client.get("/api/models/")
+        scores = {m["name"]: m["arena_elo_score"] for m in response.json()}
+        assert scores["Model A"] == 1100
+        assert scores["Model B"] == 1300
+        assert scores["Model C"] is None
+
+    def test_detail_exposes_arena_elo_from_benchmark_cache(self):
+        response = self.client.get(f"/api/models/{self.model_a.id}/")
+        assert response.status_code == 200
+        assert response.json()["arena_elo_score"] == 1100
