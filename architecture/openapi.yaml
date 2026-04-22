@@ -128,6 +128,22 @@ paths:
                     status: ok
                   summary: ok
           description: ''
+  /api/insights/comparison/:
+    get:
+      operationId: insights_comparison_retrieve
+      tags:
+      - insights
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Insight'
+          description: ''
   /api/models/:
     get:
       operationId: models_list
@@ -225,6 +241,28 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/BenchmarkSummaryEntry'
+          description: ''
+  /api/models/{id}/insight/:
+    get:
+      operationId: models_insight_retrieve
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - models
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Insight'
           description: ''
   /api/models/create/:
     post:
@@ -397,6 +435,22 @@ components:
       - benchmark
       - measured_at
       - score
+    Insight:
+      type: object
+      properties:
+        text:
+          type: string
+          readOnly: true
+        llm_model:
+          type: string
+          readOnly: true
+        cached:
+          type: boolean
+          readOnly: true
+      required:
+      - cached
+      - llm_model
+      - text
     LLMModel:
       type: object
       properties:
