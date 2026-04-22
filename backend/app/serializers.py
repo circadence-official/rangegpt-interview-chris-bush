@@ -47,7 +47,7 @@ class LLMModelSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
-    def get_arena_elo_score(self, obj):
+    def get_arena_elo_score(self, obj) -> int | None:
         score = getattr(obj, "arena_elo_score", None)
         return int(score) if score is not None else None
 
@@ -163,6 +163,6 @@ class LLMModelListSerializer(serializers.ModelSerializer):
             "is_open_source",
         ]
 
-    def get_arena_elo_score(self, obj):
+    def get_arena_elo_score(self, obj) -> int | None:
         score = getattr(obj, "arena_elo_score", None)
         return int(score) if score is not None else None
