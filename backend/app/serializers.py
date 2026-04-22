@@ -73,6 +73,14 @@ class BenchmarkResultHistorySerializer(serializers.ModelSerializer):
         fields = ["id", "benchmark", "run", "score", "created_at"]
 
 
+class BenchmarkSummaryEntrySerializer(serializers.Serializer):
+    benchmark = BenchmarkRefSerializer(read_only=True)
+    score = serializers.DecimalField(
+        max_digits=9, decimal_places=4, read_only=True
+    )
+    measured_at = serializers.DateTimeField(read_only=True)
+
+
 class LeaderboardModelSerializer(serializers.ModelSerializer):
     provider = ProviderSerializer(read_only=True)
 

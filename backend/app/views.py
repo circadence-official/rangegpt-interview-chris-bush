@@ -11,6 +11,7 @@ from app.serializers import (
     BenchmarkResultHistorySerializer,
     BenchmarkRunSerializer,
     BenchmarkSerializer,
+    BenchmarkSummaryEntrySerializer,
     LeaderboardEntrySerializer,
     LLMModelSerializer,
     LLMModelListSerializer,
@@ -61,6 +62,19 @@ class LLMModelBenchmarkResultsPagination(PageNumberPagination):
     page_size = 50
     page_size_query_param = "page_size"
     max_page_size = 200
+
+
+class LLMModelBenchmarkSummaryView(generics.ListAPIView):
+    serializer_class = BenchmarkSummaryEntrySerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        model = get_object_or_404(LLMModel, pk=self.kwargs["pk"])
+        return (
+            LatestBenchmarkResult.objects.filter(llm_model=model)
+            .select_related("benchmark")
+            .order_by("benchmark__name")
+        )
 
 
 class LLMModelBenchmarkResultsView(generics.ListAPIView):

@@ -504,6 +504,109 @@ class BenchmarkDetailViewTest(TestCase):
         assert response.status_code == 404
 
 
+class LLMModelBenchmarkSummaryViewTest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        provider = Provider.objects.create(name="Anthropic")
+        self.model = LLMModel.objects.create(
+            provider=provider,
+            name="Claude Sonnet 4",
+            context_window=200000,
+            input_price_per_1m="3.0000",
+            output_price_per_1m="15.0000",
+            release_date=date(2025, 5, 22),
+        )
+        self.other_model = LLMModel.objects.create(
+            provider=provider,
+            name="Claude Opus 4",
+            context_window=200000,
+            input_price_per_1m="15.0000",
+            output_price_per_1m="75.0000",
+            release_date=date(2025, 5, 22),
+        )
+        self.mmlu = Benchmark.objects.create(name="MMLU")
+        self.humaneval = Benchmark.objects.create(name="HumanEval")
+        self.gpqa = Benchmark.objects.create(name="GPQA")
+
+        # Older MMLU run should be shadowed by the newer one in the summary
+        self._submit(self.mmlu, self.model,
+                     datetime(2026, 1, 1, tzinfo=timezone.utc), "80.00")
+        self._submit(self.mmlu, self.model,
+                     datetime(2026, 4, 1, tzinfo=timezone.utc), "88.00")
+        self._submit(self.humaneval, self.model,
+                     datetime(2026, 2, 1, tzinfo=timezone.utc), "70.00")
+        # gpqa: model never evaluated -- must not appear
+        # other_model MMLU result: must not appear in this model's summary
+        self._submit(self.mmlu, self.other_model,
+                     datetime(2026, 3, 1, tzinfo=timezone.utc), "95.00")
+
+    def _submit(self, benchmark, model, run_at, score):
+        run, _ = BenchmarkRun.objects.get_or_create(
+            benchmark=benchmark, run_at=run_at
+        )
+        result = BenchmarkResult.objects.create(
+            run=run, llm_model=model, score=Decimal(score)
+        )
+        LatestBenchmarkResult.upsert_for_result(result)
+        return result
+
+    def test_summary_returns_latest_score_per_benchmark(self):
+        response = self.client.get(
+            f"/api/models/{self.model.id}/benchmark-summary/"
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert isinstance(data, list)
+        by_name = {e["benchmark"]["name"]: e for e in data}
+        assert set(by_name.keys()) == {"MMLU", "HumanEval"}
+        assert by_name["MMLU"]["score"] == "88.0000"
+        assert by_name["HumanEval"]["score"] == "70.0000"
+
+    def test_summary_entry_includes_measured_at_timestamp(self):
+        from django.utils.dateparse import parse_datetime
+
+        response = self.client.get(
+            f"/api/models/{self.model.id}/benchmark-summary/"
+        )
+        entry = next(
+            e for e in response.json() if e["benchmark"]["name"] == "MMLU"
+        )
+        assert parse_datetime(entry["measured_at"]) == datetime(
+            2026, 4, 1, tzinfo=timezone.utc
+        )
+
+    def test_summary_excludes_never_evaluated_benchmarks(self):
+        response = self.client.get(
+            f"/api/models/{self.model.id}/benchmark-summary/"
+        )
+        names = [e["benchmark"]["name"] for e in response.json()]
+        assert "GPQA" not in names
+
+    def test_summary_is_alphabetized_by_benchmark_name(self):
+        response = self.client.get(
+            f"/api/models/{self.model.id}/benchmark-summary/"
+        )
+        names = [e["benchmark"]["name"] for e in response.json()]
+        assert names == sorted(names)
+
+    def test_summary_returns_404_for_unknown_model(self):
+        response = self.client.get("/api/models/99999/benchmark-summary/")
+        assert response.status_code == 404
+
+    def test_summary_returns_empty_for_model_with_no_evaluations(self):
+        bare = LLMModel.objects.create(
+            provider=self.model.provider,
+            name="Bare",
+            context_window=1000,
+            input_price_per_1m="0.0000",
+            output_price_per_1m="0.0000",
+            release_date=date(2025, 1, 1),
+        )
+        response = self.client.get(f"/api/models/{bare.id}/benchmark-summary/")
+        assert response.status_code == 200
+        assert response.json() == []
+
+
 class LLMModelBenchmarkResultsViewTest(TestCase):
     def setUp(self):
         self.client = APIClient()
