@@ -1,10 +1,11 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useParams, Link } from "react-router";
 import { useModel } from "@/hooks/useModel";
 import {
   useModelBenchmarkResults,
   useModelBenchmarkSummary,
 } from "@/hooks/useModelBenchmarks";
+import { useModelInsight } from "@/hooks/useInsights";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -21,6 +22,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import InsightCard from "@/components/InsightCard";
 import ScoreTrajectoryChart from "@/components/ScoreTrajectoryChart";
 
 const CHART_COLOR = "#2563eb";
@@ -31,6 +33,8 @@ export default function ModelDetail() {
   const { data: model, isLoading, error } = useModel(modelId);
   const summary = useModelBenchmarkSummary(modelId);
   const history = useModelBenchmarkResults(modelId);
+  const [insightEnabled, setInsightEnabled] = useState(false);
+  const insight = useModelInsight(modelId, insightEnabled);
 
   const benchmarksInHistory = useMemo(() => {
     const map = new Map<number, string>();
@@ -111,6 +115,15 @@ export default function ModelDetail() {
           </div>
         </CardContent>
       </Card>
+
+      <div className="mt-6">
+        <InsightCard
+          title="AI summary"
+          query={insight}
+          enabled={insightEnabled}
+          setEnabled={setInsightEnabled}
+        />
+      </div>
 
       <Card className="mt-6">
         <CardHeader>

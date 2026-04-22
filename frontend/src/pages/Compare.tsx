@@ -5,6 +5,8 @@ import {
   useModelBenchmarkResults,
   useModelBenchmarkSummary,
 } from "@/hooks/useModelBenchmarks";
+import { useComparisonInsight } from "@/hooks/useInsights";
+import InsightCard from "@/components/InsightCard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Select,
@@ -132,6 +134,8 @@ function ComparisonPanels({ idA, idB }: { idA: number; idB: number }) {
   const summaryB = useModelBenchmarkSummary(idB);
   const historyA = useModelBenchmarkResults(idA);
   const historyB = useModelBenchmarkResults(idB);
+  const [insightEnabled, setInsightEnabled] = useState(false);
+  const insight = useComparisonInsight(idA, idB, insightEnabled);
 
   if (modelA.isLoading || modelB.isLoading || !modelA.data || !modelB.data) {
     return <p className="text-muted-foreground">Loading comparison...</p>;
@@ -145,6 +149,13 @@ function ComparisonPanels({ idA, idB }: { idA: number; idB: number }) {
 
   return (
     <>
+      <InsightCard
+        title="AI comparison"
+        query={insight}
+        enabled={insightEnabled}
+        setEnabled={setInsightEnabled}
+      />
+
       <Card>
         <CardHeader>
           <CardTitle className="text-lg">Specs</CardTitle>
