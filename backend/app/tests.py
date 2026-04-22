@@ -504,6 +504,123 @@ class BenchmarkDetailViewTest(TestCase):
         assert response.status_code == 404
 
 
+class LLMModelBenchmarkResultsViewTest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        provider = Provider.objects.create(name="Anthropic")
+        self.model = LLMModel.objects.create(
+            provider=provider,
+            name="Claude Sonnet 4",
+            context_window=200000,
+            input_price_per_1m="3.0000",
+            output_price_per_1m="15.0000",
+            release_date=date(2025, 5, 22),
+        )
+        self.other_model = LLMModel.objects.create(
+            provider=provider,
+            name="Claude Opus 4",
+            context_window=200000,
+            input_price_per_1m="15.0000",
+            output_price_per_1m="75.0000",
+            release_date=date(2025, 5, 22),
+        )
+        self.mmlu = Benchmark.objects.create(name="MMLU")
+        self.humaneval = Benchmark.objects.create(name="HumanEval")
+
+        self.r_old_mmlu = self._result(
+            self.mmlu, self.model, datetime(2026, 1, 1, tzinfo=timezone.utc),
+            "80.00",
+        )
+        self.r_new_mmlu = self._result(
+            self.mmlu, self.model, datetime(2026, 4, 1, tzinfo=timezone.utc),
+            "85.00",
+        )
+        self.r_humaneval = self._result(
+            self.humaneval, self.model,
+            datetime(2026, 2, 1, tzinfo=timezone.utc), "70.00",
+        )
+        # Noise: a different model's result should not appear
+        self._result(
+            self.mmlu, self.other_model,
+            datetime(2026, 3, 1, tzinfo=timezone.utc), "90.00",
+        )
+
+    def _result(self, benchmark, model, run_at, score):
+        run, _ = BenchmarkRun.objects.get_or_create(
+            benchmark=benchmark, run_at=run_at
+        )
+        return BenchmarkResult.objects.create(
+            run=run, llm_model=model, score=Decimal(score)
+        )
+
+    def test_history_returns_paginated_chronological_results(self):
+        response = self.client.get(
+            f"/api/models/{self.model.id}/benchmark-results/"
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert set(data.keys()) == {"count", "next", "previous", "results"}
+        assert data["count"] == 3
+        benchmarks_in_order = [r["benchmark"]["name"] for r in data["results"]]
+        assert benchmarks_in_order == ["MMLU", "HumanEval", "MMLU"]
+        scores = [r["score"] for r in data["results"]]
+        assert scores == ["80.0000", "70.0000", "85.0000"]
+
+    def test_history_includes_run_and_benchmark_refs(self):
+        response = self.client.get(
+            f"/api/models/{self.model.id}/benchmark-results/"
+        )
+        first = response.json()["results"][0]
+        assert "run_at" in first["run"]
+        assert first["benchmark"]["id"] == self.mmlu.id
+
+    def test_history_filters_by_benchmark_query_param(self):
+        response = self.client.get(
+            f"/api/models/{self.model.id}/benchmark-results/"
+            f"?benchmark={self.mmlu.id}"
+        )
+        data = response.json()
+        assert data["count"] == 2
+        names = {r["benchmark"]["name"] for r in data["results"]}
+        assert names == {"MMLU"}
+
+    def test_history_excludes_other_models_results(self):
+        response = self.client.get(
+            f"/api/models/{self.model.id}/benchmark-results/"
+        )
+        scores = [r["score"] for r in response.json()["results"]]
+        assert "90.0000" not in scores
+
+    def test_history_page_size_query_param_paginates(self):
+        response = self.client.get(
+            f"/api/models/{self.model.id}/benchmark-results/?page_size=2"
+        )
+        data = response.json()
+        assert data["count"] == 3
+        assert len(data["results"]) == 2
+        assert data["next"] is not None
+
+    def test_history_returns_404_for_unknown_model(self):
+        response = self.client.get("/api/models/99999/benchmark-results/")
+        assert response.status_code == 404
+
+    def test_history_returns_empty_results_when_model_has_none(self):
+        bare_model = LLMModel.objects.create(
+            provider=self.model.provider,
+            name="Bare",
+            context_window=1000,
+            input_price_per_1m="0.0000",
+            output_price_per_1m="0.0000",
+            release_date=date(2025, 1, 1),
+        )
+        response = self.client.get(
+            f"/api/models/{bare_model.id}/benchmark-results/"
+        )
+        assert response.status_code == 200
+        assert response.json()["count"] == 0
+        assert response.json()["results"] == []
+
+
 class BenchmarkLeaderboardViewTest(TestCase):
     def setUp(self):
         self.client = APIClient()

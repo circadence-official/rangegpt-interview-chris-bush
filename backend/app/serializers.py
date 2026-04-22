@@ -52,6 +52,27 @@ class LLMModelSerializer(serializers.ModelSerializer):
         return int(score) if score is not None else None
 
 
+class BenchmarkRefSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Benchmark
+        fields = ["id", "name"]
+
+
+class BenchmarkRunRefSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = BenchmarkRun
+        fields = ["id", "run_at"]
+
+
+class BenchmarkResultHistorySerializer(serializers.ModelSerializer):
+    benchmark = BenchmarkRefSerializer(source="run.benchmark", read_only=True)
+    run = BenchmarkRunRefSerializer(read_only=True)
+
+    class Meta:
+        model = BenchmarkResult
+        fields = ["id", "benchmark", "run", "score", "created_at"]
+
+
 class LeaderboardModelSerializer(serializers.ModelSerializer):
     provider = ProviderSerializer(read_only=True)
 

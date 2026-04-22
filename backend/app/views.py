@@ -3,10 +3,12 @@ from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import OpenApiExample, OpenApiResponse, extend_schema
 from rest_framework import generics
 from rest_framework.decorators import api_view
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from app.constants import ARENA_ELO_BENCHMARK_NAME
-from app.models import Benchmark, LatestBenchmarkResult, LLMModel
+from app.models import Benchmark, BenchmarkResult, LatestBenchmarkResult, LLMModel
 from app.serializers import (
+    BenchmarkResultHistorySerializer,
     BenchmarkRunSerializer,
     BenchmarkSerializer,
     LeaderboardEntrySerializer,
@@ -53,6 +55,29 @@ class LLMModelDetailView(generics.RetrieveAPIView):
 class LLMModelCreateView(generics.CreateAPIView):
     queryset = LLMModel.objects.all()
     serializer_class = LLMModelSerializer
+
+
+class LLMModelBenchmarkResultsPagination(PageNumberPagination):
+    page_size = 50
+    page_size_query_param = "page_size"
+    max_page_size = 200
+
+
+class LLMModelBenchmarkResultsView(generics.ListAPIView):
+    serializer_class = BenchmarkResultHistorySerializer
+    pagination_class = LLMModelBenchmarkResultsPagination
+
+    def get_queryset(self):
+        model = get_object_or_404(LLMModel, pk=self.kwargs["pk"])
+        qs = (
+            BenchmarkResult.objects.filter(llm_model=model)
+            .select_related("run", "run__benchmark")
+            .order_by("run__run_at", "id")
+        )
+        benchmark_id = self.request.query_params.get("benchmark")
+        if benchmark_id:
+            qs = qs.filter(run__benchmark_id=benchmark_id)
+        return qs
 
 
 class BenchmarkListView(generics.ListAPIView):
