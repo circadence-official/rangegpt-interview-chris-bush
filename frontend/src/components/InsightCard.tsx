@@ -1,4 +1,4 @@
-import { Sparkles } from "lucide-react";
+import { Loader2, Sparkles } from "lucide-react";
 import type { AxiosError } from "axios";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -33,7 +33,14 @@ export default function InsightCard({
               onClick={() => query.refetch()}
               disabled={query.isFetching}
             >
-              {query.isFetching ? "Regenerating..." : "Regenerate"}
+              {query.isFetching ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Regenerating
+                </>
+              ) : (
+                "Regenerate"
+              )}
             </Button>
           )}
         </div>
@@ -75,9 +82,10 @@ function InsightBody({
 
   if (query.isLoading || query.isFetching) {
     return (
-      <p className="text-sm text-muted-foreground">
-        Asking the model...
-      </p>
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        <span>Asking the model — this can take up to a minute.</span>
+      </div>
     );
   }
 
