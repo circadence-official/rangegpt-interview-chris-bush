@@ -39,5 +39,29 @@ services:
       backend:
         condition: service_healthy
 
+  ollama:
+    image: ollama/ollama:latest
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        ollama serve &
+        pid=$$!
+        sleep 3
+        ollama pull "$${OLLAMA_MODEL:-gemma3:4b}" || true
+        wait $$pid
+    environment:
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma3:4b}
+    volumes:
+      - ollama_models:/root/.ollama
+    ports:
+      - "11434:11434"
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list | grep -q ':'"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+
 volumes:
   pgdata:
+  ollama_models:

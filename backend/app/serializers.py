@@ -145,6 +145,12 @@ class BenchmarkRunSerializer(serializers.ModelSerializer):
         return run
 
 
+class InsightSerializer(serializers.Serializer):
+    text = serializers.CharField(read_only=True)
+    llm_model = serializers.CharField(read_only=True)
+    cached = serializers.BooleanField(read_only=True)
+
+
 class LLMModelListSerializer(serializers.ModelSerializer):
     provider = ProviderSerializer(read_only=True)
     arena_elo_score = serializers.SerializerMethodField()
